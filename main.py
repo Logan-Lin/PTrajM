@@ -59,5 +59,5 @@ if __name__ == '__main__':
             pretrain_dataloader = DataLoader(train_dataset,
                                              collate_fn=PretrainPadder(device=device, **setting['pretrain']['padder']),
                                              **setting['pretrain']['dataloader'])
-            trajfm = pretrain_model(model=traj_clip, dataloader=pretrain_dataloader,
-                                    save_name=SAVE_NAME, **setting['pretrain']['config'])
+            traj_clip = pretrain_model(model=traj_clip, dataloader=pretrain_dataloader,
+                                       save_name=SAVE_NAME, **setting['pretrain']['config'])

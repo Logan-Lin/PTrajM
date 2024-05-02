@@ -32,6 +32,9 @@ class TrajClip(nn.Module):
             'text_embed_mat': road_embed_mat,
             'text_embed_layer': nn.Sequential(nn.LayerNorm(road_embed.shape[1]),
                                               nn.Linear(road_embed.shape[1], d_model)),
+            'index_embed_layer': nn.Sequential(nn.Embedding(road_embed.shape[0], embed_size),
+                                               nn.LayerNorm(embed_size),
+                                               nn.Linear(embed_size, d_model)),
             'seq_encoder': nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=d_model, nhead=8, dim_feedforward=256, batch_first=True),
                                                  num_layers=2)
         })
@@ -42,6 +45,9 @@ class TrajClip(nn.Module):
             'text_embed_mat': poi_embed_mat,
             'text_embed_layer': nn.Sequential(nn.LayerNorm(poi_embed.shape[1]),
                                               nn.Linear(poi_embed.shape[1], d_model)),
+            'index_embed_layer': nn.Sequential(nn.Embedding(poi_embed.shape[0], embed_size),
+                                               nn.LayerNorm(embed_size),
+                                               nn.Linear(embed_size, d_model)),
             'seq_encoder': nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=d_model, nhead=8, dim_feedforward=256, batch_first=True),
                                                  num_layers=2)
         })
@@ -94,16 +100,18 @@ class TrajClip(nn.Module):
 
         # Road view.
         road = input_seq[:, :, 4].long()
-        road_e = self.road_view['text_embed_layer'](self.road_view['text_embed_mat'](road))
-        road_h = road_e + pos_encoding
+        road_index_e = self.road_view['index_embed_layer'](road)
+        road_text_e = self.road_view['text_embed_layer'](self.road_view['text_embed_mat'](road))
+        road_h = road_index_e + road_text_e + pos_encoding
         road_h = self.poi_view['seq_encoder'](road_h, src_key_padding_mask=batch_mask)
         road_h = road_h.masked_fill(batch_mask.unsqueeze(-1), 0).sum(1) / valid_lens.unsqueeze(-1)
 
         # POI view.
         poi = ((self.poi_coors.unsqueeze(0).unsqueeze(0) -
                 spatial.unsqueeze(2)) ** 2).sum(-1).argmin(dim=-1)
-        poi_e = self.poi_view['text_embed_layer'](self.poi_view['text_embed_mat'](poi))
-        poi_h = poi_e + pos_encoding
+        poi_index_e = self.poi_view['index_embed_layer'](poi)
+        poi_text_e = self.poi_view['text_embed_layer'](self.poi_view['text_embed_mat'](poi))
+        poi_h = poi_index_e + poi_text_e + pos_encoding
         poi_h = self.poi_view['seq_encoder'](poi_h, src_key_padding_mask=batch_mask)
         poi_h = poi_h.masked_fill(batch_mask.unsqueeze(-1), 0).sum(1) / valid_lens.unsqueeze(-1)
 
