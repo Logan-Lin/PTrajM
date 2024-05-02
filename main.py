@@ -1,0 +1,63 @@
+import os
+import json
+from argparse import ArgumentParser
+
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import DataLoader
+
+import utils
+from data import TrajClipDataset, PretrainPadder, X_COL, Y_COL
+from pipeline import pretrain_model
+from models.traj_clip import TrajClip
+
+
+SETTINGS_CACHE_DIR = os.environ.get('SETTINGS_CACHE_DIR', os.path.join('settings', 'cache'))
+
+
+if __name__ == '__main__':
+    parser = ArgumentParser()
+    parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, required=True)
+    parser.add_argument('--cuda', help='index of the cuda device to use', type=int)
+    args = parser.parse_args()
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(args.cuda)
+    os.environ['PYDEVD_DISABLE_FILE_VALIDATION'] = '1'
+    device = f'cuda:0' if torch.cuda.is_available() and args.cuda is not None else 'cpu'
+
+    # This key is an indicator of multiple things.
+    datetime_key = utils.get_datetime_key()
+    print(f'====START EXPERIMENT, DATETIME KEY: {datetime_key} ====')
+
+    # Load the settings file, and save a backup in the cache directory.
+    with open(os.path.join('settings', f'{args.settings}.json'), 'r') as fp:
+        settings = json.load(fp)
+    utils.create_if_noexists(SETTINGS_CACHE_DIR)
+    with open(os.path.join(SETTINGS_CACHE_DIR, f'{datetime_key}.json'), 'w') as fp:
+        json.dump(settings, fp)
+
+    # Iterate through the multiple settings.
+    for setting_i, setting in enumerate(settings):
+        print(f'===SETTING {setting_i}/{len(settings)}===')
+        SAVE_NAME = setting.get('save_name', None)
+
+        train_traj_df = pd.read_hdf(setting['dataset']['train_traj_df'], key='trips')
+        test_traj_df = pd.read_hdf(setting['dataset']['test_traj_df'], key='trips')
+        train_dataset = TrajClipDataset(traj_df=train_traj_df)
+
+        road_embed = np.load(setting['dataset']['road_embed'])
+
+        poi_df = pd.read_hdf(setting['dataset']['poi_df'], key='pois')
+        poi_embed = np.load(setting['dataset']['poi_embed'])
+        poi_coors = poi_df[[X_COL, Y_COL]].to_numpy()
+
+        traj_clip = TrajClip(road_embed=road_embed, poi_embed=poi_embed, poi_coors=poi_coors,
+                             spatial_border=train_dataset.spatial_border, **setting['traj_clip']).to(device)
+
+        if 'pretrain' in setting:
+            pretrain_dataloader = DataLoader(train_dataset,
+                                             collate_fn=PretrainPadder(device=device, **setting['pretrain']['padder']),
+                                             **setting['pretrain']['dataloader'])
+            trajfm = pretrain_model(model=traj_clip, dataloader=pretrain_dataloader,
+                                    save_name=SAVE_NAME, **setting['pretrain']['config'])

@@ -1,0 +1,30 @@
+[
+    {
+        "save_name": "0404",
+        "dataset": {
+            "train_traj_df": "./samples/small_chengdu.h5",
+            "test_traj_df": "./samples/small_chengdu.h5",
+            "poi_df": "./samples/small_chengdu.h5",
+            "poi_embed": "./samples/small_chengdu_poi_embed.npy",
+            "road_embed": "./samples/small_chengdu_road_embed.npy"
+        },
+        "traj_clip": {
+            "embed_size": 64,
+            "d_model": 128
+        },
+        "pretrain": {
+            "dataloader": {
+                "batch_size": 16,
+                "shuffle": true,
+                "num_workers": 1
+            },
+            "padder": {},
+            "config": {
+                "num_epoch": 5,
+                "lr": 1e-3,
+                "save_model": true,
+                "load_model": false
+            }
+        }
+    }
+]
