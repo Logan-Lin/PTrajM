@@ -9,9 +9,22 @@ from .encode import PositionalEmbedding, FourierEncode
 class TrajClip(nn.Module):
     def __init__(self, embed_size, d_model, road_embed, poi_embed, poi_coors, spatial_border,
                  road_weight=1, poi_weight=1):
+        """The core model of Trajectory CLIP.
+
+        Args:
+            embed_size (int): dimension of learnable embedding modules.
+            d_model (int): dimension of the sequential models.
+            road_embed (np.array): pre-defined embedding matrix of roads, with shape (n_roads, E).
+            poi_embed (np.array): pre-defined embedding matrix of POIs, with shape (n_pois, E).
+            poi_coors (np.array): coordiantes of all POIs, with shape (n_pois, 2).
+            spatial_border (list): coordinates indicating the spatial border: [[x_min, y_min], [x_max, y_max]].
+            road_weight (int, optional): loss weight of road view. Defaults to 1.
+            poi_weight (int, optional): loss weight of poi view. Defaults to 1.
+        """
+
         super().__init__()
 
-        self.poi_coors = nn.Parameter(torch.tensor(poi_coors).float(), requires_grad=False)
+        self.poi_coors = nn.Parameter(torch.from_numpy(poi_coors).float(), requires_grad=False)
         self.spatial_border = nn.Parameter(torch.tensor(spatial_border), requires_grad=False)
         self.road_weight = road_weight
         self.poi_weight = poi_weight
@@ -56,6 +69,14 @@ class TrajClip(nn.Module):
         self.cross_entropy = nn.CrossEntropyLoss()
 
     def forward(self, input_seq, valid_lens):
+        """
+        Args:
+            input_seq (FloatTensor): batch of trajectory features, with shape (B, L, F).
+            valid_lens (LongTensor): valid lengths of trajectories in this batch.
+
+        Returns:
+            Tensor: embedding vectors for this batch of trajectories, with shape (B, E).
+        """
         B, L, _ = input_seq.shape
         positions = repeat(torch.arange(L), 'L -> B L', B=B)
 
@@ -79,6 +100,14 @@ class TrajClip(nn.Module):
         return traj_h
 
     def loss(self, input_seq, valid_lens):
+        """Calcualte the pre-training loss.
+
+        Args:
+            Same as the forward function.
+
+        Returns:
+            FloatTensor: the pre-training loss value of this batch.
+        """
         B, L, _ = input_seq.shape
         positions = repeat(torch.arange(L), 'L -> B L', B=B)
         batch_mask = get_batch_mask(B, L, valid_lens)

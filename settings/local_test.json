@@ -13,6 +13,8 @@
             "d_model": 128
         },
         "pretrain": {
+            "save": true,
+            "load": false,
             "dataloader": {
                 "batch_size": 16,
                 "shuffle": true,
@@ -21,9 +23,7 @@
             "padder": {},
             "config": {
                 "num_epoch": 5,
-                "lr": 1e-3,
-                "save_model": true,
-                "load_model": false
+                "lr": 1e-3
             }
         }
     }

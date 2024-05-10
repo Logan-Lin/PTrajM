@@ -13,7 +13,19 @@ FEATURE_PAD = 0
 
 
 class TrajClipDataset(Dataset):
+    """Dataset support class for TrajCLIP.
+
+    Args:
+        traj_df (pd.DataFrame): contains points of all trajectories.
+        traj_ids (pd.Series): records the unique IDs of all trajectory sequences.
+        spatial_border (list): coordinates indicating the spatial border: [[x_min, y_min], [x_max, y_max]].
+    """
+
     def __init__(self, traj_df):
+        """
+        Args:
+            traj_df (pd.DataFrame): contains points of all trajectories.
+        """
         super().__init__()
 
         self.traj_df = traj_df
@@ -38,6 +50,15 @@ class PretrainPadder:
         self.device = device
 
     def __call__(self, raw_batch):
+        """Collate function for padding the raw batch of trajectory DataFrames into Tensors.
+
+        Args:
+            raw_batch (list): each item is a `pd.DataFrame` representing one trajectory.
+
+        Returns:
+            Tensor: the padded batch of trajectory features, with shape (B, L, F).
+            Tensor: the valid lengths of trajectories in the batch, with shape (B).
+        """
         traj_batch, valid_lens = [], []
         for row in raw_batch:
             traj = row[[X_COL, Y_COL, T_COL, DT_COL, ROAD_COL]].to_numpy()

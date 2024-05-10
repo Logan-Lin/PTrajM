@@ -14,9 +14,10 @@ from models.traj_clip import TrajClip
 
 
 SETTINGS_CACHE_DIR = os.environ.get('SETTINGS_CACHE_DIR', os.path.join('settings', 'cache'))
+MODEL_CACHE_DIR = os.environ.get('MODEL_CACHE_DIR', 'saved_model')
 
 
-if __name__ == '__main__':
+def main():
     parser = ArgumentParser()
     parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, required=True)
     parser.add_argument('--cuda', help='index of the cuda device to use', type=int)
@@ -56,8 +57,20 @@ if __name__ == '__main__':
                              spatial_border=train_dataset.spatial_border, **setting['traj_clip']).to(device)
 
         if 'pretrain' in setting:
-            pretrain_dataloader = DataLoader(train_dataset,
-                                             collate_fn=PretrainPadder(device=device, **setting['pretrain']['padder']),
-                                             **setting['pretrain']['dataloader'])
-            traj_clip = pretrain_model(model=traj_clip, dataloader=pretrain_dataloader,
-                                       save_name=SAVE_NAME, **setting['pretrain']['config'])
+            if setting['pretrain'].get('load', False):
+                traj_clip.load_state_dict(torch.load(os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}.pretrain'),
+                                                     map_location=device))
+            else:
+                pretrain_dataloader = DataLoader(train_dataset,
+                                                 collate_fn=PretrainPadder(
+                                                     device=device, **setting['pretrain']['padder']),
+                                                 **setting['pretrain']['dataloader'])
+                pretrain_model(model=traj_clip, dataloader=pretrain_dataloader, **setting['pretrain']['config'])
+
+                if setting['pretrain'].get('save', True):
+                    utils.create_if_noexists(MODEL_CACHE_DIR)
+                    torch.save(traj_clip.state_dict(), os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}.pretrain'))
+
+
+if __name__ == '__main__':
+    main()
