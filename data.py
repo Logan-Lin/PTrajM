@@ -46,7 +46,14 @@ class TrajClipDataset(Dataset):
 
 
 class PretrainPadder:
+    """Collate function for padding pre-training data.
+    """
+
     def __init__(self, device):
+        """
+        Args:
+            device (str): name of the device to put tensors on.
+        """
         self.device = device
 
     def __call__(self, raw_batch):
@@ -56,8 +63,8 @@ class PretrainPadder:
             raw_batch (list): each item is a `pd.DataFrame` representing one trajectory.
 
         Returns:
-            Tensor: the padded batch of trajectory features, with shape (B, L, F).
-            Tensor: the valid lengths of trajectories in the batch, with shape (B).
+            torch.FloatTensor: the padded batch of trajectory features, with shape (B, L, F).
+            torch.LongTensor: the valid lengths of trajectories in the batch, with shape (B).
         """
         traj_batch, valid_lens = [], []
         for row in raw_batch:
@@ -69,6 +76,87 @@ class PretrainPadder:
         valid_lens = torch.tensor(valid_lens).long().to(self.device)
 
         return traj_batch, valid_lens
+
+
+class DpPadder:
+    """Collate function for padding destination prediction (DP) task data.
+    """
+
+    def __init__(self, device, pred_len):
+        """
+        Args:
+            device (str): name of the device to put tensors on.
+            pred_len (int): the length of the tail sub-trajectory to remove from the input trajectory.
+        """
+        self.device = device
+        self.pred_len = pred_len
+
+    def __call__(self, raw_batch):
+        """
+        Returns:
+            torch.FloatTensor: the padded batch of trajectory features, with shape (B, L, F).
+            torch.LongTensor: the valid lengths of trajectories in the batch, with shape (B).
+            torch.FloatTensor: the ground truth of the DP task, i.e., features of the last trajectory point, 
+            with shape (B, F).
+        """
+        traj_batch, valid_lens, label_batch = [], [], []
+        for row in raw_batch:
+            traj = row[[X_COL, Y_COL, T_COL, DT_COL, ROAD_COL]].to_numpy()
+            traj = traj[:-self.pred_len]
+            valid_len = traj.shape[0]
+            traj_batch.append(traj)
+            valid_lens.append(valid_len)
+            label_batch.append(row.iloc[-1][X_COL, Y_COL, T_COL, DT_COL, ROAD_COL].to_numpy())
+        traj_batch = torch.from_numpy(pad_batch(traj_batch)).float().to(self.device)
+        valid_lens = torch.tensor(valid_lens).long().to(self.device)
+        label_batch = torch.from_numpy(np.stack(label_batch, 0)).float().to(self.device)
+
+        return traj_batch, valid_lens, label_batch
+
+
+class TtePadder:
+    """Collate function for padding travel time estimation (TTE) task data.
+    """
+
+    def __init__(self, device):
+        """
+        Args:
+            device (str): name of the device to put tensors on.
+        """
+        self.device = device
+
+    def __call__(self, raw_batch):
+        """
+        Returns:
+            torch.FloatTensor: the padded batch of trajectory features, with shape (B, L, F).
+            torch.LongTensor: the valid lengths of trajectories in the batch, with shape (B).
+            torch.FloatTensor: the ground truth of the TTE task, i.e., travel time of trajectories in seconds, 
+            with shape (B).
+        """
+        traj_batch, valid_lens, label_batch = [], [], []
+        for row in raw_batch:
+            traj = row[[X_COL, Y_COL, T_COL, DT_COL, ROAD_COL]].to_numpy()
+            traj[:, [2, 3]] = 0  # Fill the temporal features in trajectory to 0.
+            valid_len = traj.shape[0]
+            traj_batch.append(traj)
+            valid_lens.append(valid_len)
+            label_batch.append(row.iloc[-1][DT_COL])
+        traj_batch = torch.from_numpy(pad_batch(traj_batch)).float().to(self.device)
+        valid_lens = torch.tensor(valid_lens).long().to(self.device)
+        label_batch = torch.tensor(label_batch).float().to(self.device)
+
+        return traj_batch, valid_lens, label_batch
+
+
+def fetch_task_padder(padder_name, device, padder_params):
+    if padder_name == 'dp':
+        task_padder = DpPadder(device, **padder_params)
+    elif padder_name == 'tte':
+        task_padder = TtePadder(device, **padder_params)
+    else:
+        raise NotImplementedError(f'No Padder named {padder_name}')
+
+    return task_padder
 
 
 def pad_batch(batch):
