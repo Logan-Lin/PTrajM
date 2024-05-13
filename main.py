@@ -11,6 +11,7 @@ import utils
 from data import TrajClipDataset, PretrainPadder, X_COL, Y_COL
 from pipeline import pretrain_model
 from models.traj_clip import TrajClip
+from models.predictor import MlpPredictor
 
 
 SETTINGS_CACHE_DIR = os.environ.get('SETTINGS_CACHE_DIR', os.path.join('settings', 'cache'))
@@ -55,6 +56,7 @@ def main():
 
         traj_clip = TrajClip(road_embed=road_embed, poi_embed=poi_embed, poi_coors=poi_coors,
                              spatial_border=train_dataset.spatial_border, **setting['traj_clip']).to(device)
+        pred_head = MlpPredictor(**setting['pred_head']).to(device)
 
         if 'pretrain' in setting:
             if setting['pretrain'].get('load', False):

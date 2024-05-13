@@ -26,7 +26,7 @@ def pretrain_model(model, dataloader, num_epoch, lr):
             loss_values = []
             for batch in tqdm(dataloader, desc='-->Traversing', leave=False):
                 optimizer.zero_grad()
-                loss = model.pretrain(*batch)
+                loss = model.loss(*batch)
                 loss.backward()
                 optimizer.step()
                 loss_values.append(loss.item())

@@ -12,6 +12,11 @@
             "embed_size": 64,
             "d_model": 128
         },
+        "pred_head": {
+            "input_size": 128,
+            "hidden_size": 64,
+            "output_size": 5
+        },
         "pretrain": {
             "save": true,
             "load": false,
