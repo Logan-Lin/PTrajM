@@ -99,7 +99,7 @@ class TrajClip(nn.Module):
 
         return traj_h
 
-    def loss(self, input_seq, valid_lens):
+    def pretrain(self, input_seq, valid_lens):
         """Calcualte the pre-training loss.
 
         Args:
