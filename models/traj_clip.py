@@ -4,6 +4,7 @@ from torch import nn
 from einops import repeat
 
 from .encode import PositionalEmbedding, FourierEncode
+from data import COL_I
 
 
 class TrajClip(nn.Module):
@@ -67,6 +68,29 @@ class TrajClip(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.cross_entropy = nn.CrossEntropyLoss()
+    
+    def cal_traj_h(self, spatial, temporal, valid_lens):
+        B, L = spatial.size(0), spatial.size(1)
+        positions = repeat(torch.arange(L), 'L -> B L', B=B)
+
+        norm_spatial = (spatial - self.spatial_border[0].unsqueeze(0).unsqueeze(0)) / \
+            (self.spatial_border[1] - self.spatial_border[0]).unsqueeze(0).unsqueeze(0)
+        spatial_e = self.traj_view['spatial_embed_layer'](norm_spatial)  # (B, L, E)
+
+        temporal_e = self.traj_view['temporal_embed_layer'](
+            torch.cat([self.traj_view['temporal_embed_modules'][i](temp_token)
+                       for i, temp_token in enumerate(tokenize_timestamp(temporal))], -1)
+        )  # (B, L, E)
+        # Temporal values lower than 0 stands for feature mask.
+        temporal_e = temporal_e.masked_fill(temporal[..., :1] < 0, 0)
+
+        pos_encoding = self.pos_encode_layer(positions)
+        traj_h = spatial_e + temporal_e + pos_encoding
+        batch_mask = get_batch_mask(B, L, valid_lens)
+        traj_h = self.traj_view['seq_encoder'](traj_h, src_key_padding_mask=batch_mask)
+        traj_h = traj_h.masked_fill(batch_mask.unsqueeze(-1), 0).sum(1) / repeat(valid_lens, 'B -> B 1')
+
+        return traj_h
 
     def forward(self, input_seq, valid_lens):
         """
@@ -77,25 +101,9 @@ class TrajClip(nn.Module):
         Returns:
             Tensor: embedding vectors for this batch of trajectories, with shape (B, E).
         """
-        B, L, _ = input_seq.shape
-        positions = repeat(torch.arange(L), 'L -> B L', B=B)
-
-        spatial = input_seq[:, :, [0, 1]]  # (B, L, 2)
-        norm_spatial = (spatial - self.spatial_border[0].unsqueeze(0).unsqueeze(0)) / \
-            (self.spatial_border[1] - self.spatial_border[0]).unsqueeze(0).unsqueeze(0)
-        spatial_e = self.traj_view['spatial_embed_layer'](norm_spatial)  # (B, L, E)
-
-        temporal = input_seq[:, :, [2, 3]]  # (B, L, 2)
-        temporal_e = self.traj_view['temporal_embed_layer'](
-            torch.cat([self.traj_view['temporal_embed_modules'][i](temp_token)
-                       for i, temp_token in enumerate(tokenize_timestamp(temporal))], -1)
-        )
-
-        pos_encoding = self.pos_encode_layer(positions)
-        traj_h = spatial_e + temporal_e + pos_encoding
-        batch_mask = get_batch_mask(B, L, valid_lens)
-        traj_h = self.traj_view['seq_encoder'](traj_h, src_key_padding_mask=batch_mask)
-        traj_h = traj_h.masked_fill(batch_mask, 0).sum(1) / repeat(valid_lens, 'B -> B 1')
+        spatial = input_seq[:, :, COL_I['spatial']]  # (B, L, 2)
+        temporal = input_seq[:, :, COL_I['temporal']]  # (B, L, 2)
+        traj_h = self.cal_traj_h(spatial, temporal, valid_lens)
 
         return traj_h
 
@@ -114,21 +122,12 @@ class TrajClip(nn.Module):
         pos_encoding = self.pos_encode_layer(positions)
 
         # Trajectory (spatio-temporal) view.
-        spatial = input_seq[:, :, [0, 1]]  # (B, L, 2)
-        norm_spatial = (spatial - self.spatial_border[0].unsqueeze(0).unsqueeze(0)) / \
-            (self.spatial_border[1] - self.spatial_border[0]).unsqueeze(0).unsqueeze(0)
-        spatial_e = self.traj_view['spatial_embed_layer'](norm_spatial)  # (B, L, E)
-        temporal = input_seq[:, :, [2, 3]]  # (B, L, 2)
-        temporal_e = self.traj_view['temporal_embed_layer'](
-            torch.cat([self.traj_view['temporal_embed_modules'][i](temp_token)
-                       for i, temp_token in enumerate(tokenize_timestamp(temporal))], -1)
-        )
-        traj_h = spatial_e + temporal_e + pos_encoding
-        traj_h = self.traj_view['seq_encoder'](traj_h, src_key_padding_mask=batch_mask)
-        traj_h = traj_h.masked_fill(batch_mask.unsqueeze(-1), 0).sum(1) / valid_lens.unsqueeze(-1)
+        spatial = input_seq[:, :, COL_I['spatial']]  # (B, L, 2)
+        temporal = input_seq[:, :, COL_I['temporal']]  # (B, L, 2)
+        traj_h = self.cal_traj_h(spatial, temporal, valid_lens)
 
         # Road view.
-        road = input_seq[:, :, 4].long()
+        road = input_seq[:, :, COL_I['road']].long()
         road_index_e = self.road_view['index_embed_layer'](road)
         road_text_e = self.road_view['text_embed_layer'](self.road_view['text_embed_mat'](road))
         road_h = road_index_e + road_text_e + pos_encoding

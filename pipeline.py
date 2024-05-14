@@ -1,11 +1,6 @@
-import os
-
 import numpy as np
 import torch
-from torch import nn
 from tqdm import trange, tqdm
-
-from utils import create_if_noexists
 
 
 def pretrain_model(model, dataloader, num_epoch, lr):
@@ -47,7 +42,7 @@ def finetune_model(model, pred_head, dataloader, num_epoch, lr, ft_encoder=True)
     """
     pred_head.train()
     if ft_encoder:
-        optimizer = torch.optim.Adam(list(model.parameters() + pred_head.parameters()), lr=lr)
+        optimizer = torch.optim.Adam(list(model.parameters()) + list(pred_head.parameters()), lr=lr)
         model.train()
     else:
         optimizer = torch.optim.Adam(pred_head.parameters(), lr=lr)

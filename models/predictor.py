@@ -11,13 +11,14 @@ class MlpPredictor(nn.Module):
             output_size (int): number of output feature dimension.
             pred_type (str): type of prediction, 'regression' or 'classification'.
         """
+        super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_size, hidden_size),
             nn.LeakyReLU(),
             nn.Linear(hidden_size, output_size)
         )
         self.pred_type = pred_type
-    
+
     def forward(self, traj_h):
         pred = self.net(traj_h)
         if self.pred_type == 'classification':
@@ -30,9 +31,8 @@ class MlpPredictor(nn.Module):
         if self.pred_type == 'regression':
             loss = F.mse_loss(pred, label)
         elif self.pred_type == 'classification':
-            loss = F.cross_entropy(pred, label)
+            loss = F.cross_entropy(pred, label.long().squeeze(-1))
         else:
             raise NotImplementedError(f'No prediction type: {self.pred_type}.')
-        
-        return loss
 
+        return loss

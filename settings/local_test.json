@@ -14,12 +14,13 @@
         },
         "pred_head": {
             "input_size": 128,
-            "hidden_size": 64,
-            "output_size": 5
+            "hidden_size": 256,
+            "output_size": 5000,
+            "pred_type": "classification"
         },
         "pretrain": {
+            "load": true,
             "save": true,
-            "load": false,
             "dataloader": {
                 "batch_size": 16,
                 "shuffle": true,
@@ -29,6 +30,29 @@
             "config": {
                 "num_epoch": 5,
                 "lr": 1e-3
+            }
+        },
+        "finetune": {
+            "load": false,
+            "save": true,
+            "dataloader": {
+                "batch_size": 16,
+                "shuffle": true,
+                "num_workers": 1
+            },
+            "padder": {
+                "name": "dp",
+                "params": {
+                    "pred_len": 5,
+                    "pred_cols": [
+                        "road"
+                    ]
+                }
+            },
+            "config": {
+                "num_epoch": 5,
+                "lr": 1e-3,
+                "ft_encoder": true
             }
         }
     }

@@ -8,8 +8,8 @@ import torch
 from torch.utils.data import DataLoader
 
 import utils
-from data import TrajClipDataset, PretrainPadder, X_COL, Y_COL
-from pipeline import pretrain_model
+from data import TrajClipDataset, PretrainPadder, fetch_task_padder, X_COL, Y_COL
+from pipeline import pretrain_model, finetune_model
 from models.traj_clip import TrajClip
 from models.predictor import MlpPredictor
 
@@ -72,6 +72,23 @@ def main():
                 if setting['pretrain'].get('save', True):
                     utils.create_if_noexists(MODEL_CACHE_DIR)
                     torch.save(traj_clip.state_dict(), os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}.pretrain'))
+
+        if 'finetune' in setting:
+            if setting['finetune'].get('load', False):
+                traj_clip.load_state_dict(torch.load(os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}_trajclip.finetune')))
+                pred_head.load_state_dict(torch.load(os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}_predhead.finetune')))
+            else:
+                finetune_padder = fetch_task_padder(padder_name=setting['finetune']['padder']['name'],
+                                                    device=device, padder_params=setting['finetune']['padder']['params'])
+                finetune_dataloader = DataLoader(train_dataset, collate_fn=finetune_padder,
+                                                 **setting['finetune']['dataloader'])
+                finetune_model(model=traj_clip, pred_head=pred_head, dataloader=finetune_dataloader,
+                               **setting['finetune']['config'])
+
+                if setting['finetune'].get('save', True):
+                    utils.create_if_noexists(MODEL_CACHE_DIR)
+                    torch.save(traj_clip.state_dict(), os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}_trajclip.finetune'))
+                    torch.save(pred_head.state_dict(), os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}_predhead.finetune'))
 
 
 if __name__ == '__main__':

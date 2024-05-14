@@ -9,6 +9,11 @@ Y_COL = 'lat'
 T_COL = 'timestamp'
 DT_COL = 'delta_t'
 ROAD_COL = 'road'
+COL_I = {
+    "spatial": [0, 1],
+    "temporal": [2, 3],
+    "road": 4
+}
 FEATURE_PAD = 0
 
 
@@ -82,14 +87,16 @@ class DpPadder:
     """Collate function for padding destination prediction (DP) task data.
     """
 
-    def __init__(self, device, pred_len):
+    def __init__(self, device, pred_len, pred_cols):
         """
         Args:
             device (str): name of the device to put tensors on.
             pred_len (int): the length of the tail sub-trajectory to remove from the input trajectory.
+            pred_cols (list): the columns to predict.
         """
         self.device = device
         self.pred_len = pred_len
+        self.pred_cols = pred_cols
 
     def __call__(self, raw_batch):
         """
@@ -106,10 +113,12 @@ class DpPadder:
             valid_len = traj.shape[0]
             traj_batch.append(traj)
             valid_lens.append(valid_len)
-            label_batch.append(row.iloc[-1][X_COL, Y_COL, T_COL, DT_COL, ROAD_COL].to_numpy())
+
+            label = row.iloc[-1][self.pred_cols].to_numpy()
+            label_batch.append(label)
         traj_batch = torch.from_numpy(pad_batch(traj_batch)).float().to(self.device)
         valid_lens = torch.tensor(valid_lens).long().to(self.device)
-        label_batch = torch.from_numpy(np.stack(label_batch, 0)).float().to(self.device)
+        label_batch = torch.from_numpy(np.stack(label_batch, 0).astype(float)).float().to(self.device)
 
         return traj_batch, valid_lens, label_batch
 
@@ -130,17 +139,17 @@ class TtePadder:
         Returns:
             torch.FloatTensor: the padded batch of trajectory features, with shape (B, L, F).
             torch.LongTensor: the valid lengths of trajectories in the batch, with shape (B).
-            torch.FloatTensor: the ground truth of the TTE task, i.e., travel time of trajectories in seconds, 
+            torch.FloatTensor: the ground truth of the TTE task, i.e., travel time of trajectories in minutes, 
             with shape (B).
         """
         traj_batch, valid_lens, label_batch = [], [], []
         for row in raw_batch:
             traj = row[[X_COL, Y_COL, T_COL, DT_COL, ROAD_COL]].to_numpy()
-            traj[:, [2, 3]] = 0  # Fill the temporal features in trajectory to 0.
+            traj[1:, COL_I['temporal']] = -1  # Fill the temporal features in trajectory to -1.
             valid_len = traj.shape[0]
             traj_batch.append(traj)
             valid_lens.append(valid_len)
-            label_batch.append(row.iloc[-1][DT_COL])
+            label_batch.append(row.iloc[-1][DT_COL] / 60)
         traj_batch = torch.from_numpy(pad_batch(traj_batch)).float().to(self.device)
         valid_lens = torch.tensor(valid_lens).long().to(self.device)
         label_batch = torch.tensor(label_batch).float().to(self.device)
