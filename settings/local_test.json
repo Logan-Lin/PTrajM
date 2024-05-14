@@ -33,7 +33,7 @@
             }
         },
         "finetune": {
-            "load": false,
+            "load": true,
             "save": true,
             "dataloader": {
                 "batch_size": 16,
@@ -53,6 +53,22 @@
                 "num_epoch": 5,
                 "lr": 1e-3,
                 "ft_encoder": true
+            }
+        },
+        "test": {
+            "save": true,
+            "dataloader": {
+                "batch_size": 16,
+                "num_workers": 1
+            },
+            "padder": {
+                "name": "dp",
+                "params": {
+                    "pred_len": 5,
+                    "pred_cols": [
+                        "road"
+                    ]
+                }
             }
         }
     }

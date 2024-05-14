@@ -9,13 +9,14 @@ from torch.utils.data import DataLoader
 
 import utils
 from data import TrajClipDataset, PretrainPadder, fetch_task_padder, X_COL, Y_COL
-from pipeline import pretrain_model, finetune_model
+from pipeline import pretrain_model, finetune_model, test_model
 from models.traj_clip import TrajClip
 from models.predictor import MlpPredictor
 
 
 SETTINGS_CACHE_DIR = os.environ.get('SETTINGS_CACHE_DIR', os.path.join('settings', 'cache'))
 MODEL_CACHE_DIR = os.environ.get('MODEL_CACHE_DIR', 'saved_model')
+PRED_SAVE_DIR = os.environ.get('PRED_SAVE_DIR', 'predictions')
 
 
 def main():
@@ -47,6 +48,7 @@ def main():
         train_traj_df = pd.read_hdf(setting['dataset']['train_traj_df'], key='trips')
         test_traj_df = pd.read_hdf(setting['dataset']['test_traj_df'], key='trips')
         train_dataset = TrajClipDataset(traj_df=train_traj_df)
+        test_dataset = TrajClipDataset(traj_df=test_traj_df)
 
         road_embed = np.load(setting['dataset']['road_embed'])
 
@@ -89,6 +91,17 @@ def main():
                     utils.create_if_noexists(MODEL_CACHE_DIR)
                     torch.save(traj_clip.state_dict(), os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}_trajclip.finetune'))
                     torch.save(pred_head.state_dict(), os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}_predhead.finetune'))
+
+        if 'test' in setting:
+            test_padder = fetch_task_padder(padder_name=setting['test']['padder']['name'],
+                                            device=device, padder_params=setting['test']['padder']['params'])
+            test_dataloader = DataLoader(test_dataset, shuffle=False, collate_fn=test_padder,
+                                         **setting['test']['dataloader'])
+            predictions, targets = test_model(model=traj_clip, pred_head=pred_head, dataloader=test_dataloader)
+            if setting['test'].get('save', False):
+                utils.create_if_noexists(os.path.join(PRED_SAVE_DIR, SAVE_NAME))
+                np.save(os.path.join(PRED_SAVE_DIR, SAVE_NAME, 'predictions.npy'), predictions)
+                np.save(os.path.join(PRED_SAVE_DIR, SAVE_NAME, 'targets.npy'), targets)
 
 
 if __name__ == '__main__':

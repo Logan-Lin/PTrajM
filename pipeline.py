@@ -64,3 +64,27 @@ def finetune_model(model, pred_head, dataloader, num_epoch, lr, ft_encoder=True)
                 optimizer.step()
                 loss_values.append(loss.item())
             bar.set_description(bar_desc % np.mean(loss_values))
+
+
+@torch.no_grad()
+def test_model(model, pred_head, dataloader):
+    """Test the model with specific prediction tasks.
+
+    Args:
+        model (nn.Module): the trajectory embedding model to test.
+        pred_head (nn.Module): the prediction head for mapping trajectory embeddings to predictions.
+        dataloader (DataLoader): batch iterator containing the testing data.
+    """
+    model.eval()
+    pred_head.eval()
+
+    predictions, targets = [], []
+    for batch in tqdm(dataloader, 'Testing'):
+        *input_batch, target = batch
+        traj_h = model(*input_batch)
+        pred = pred_head(traj_h)
+        predictions.append(pred.cpu().numpy())
+        targets.append(target.cpu().numpy())
+    predictions = np.concatenate(predictions, 0)
+    targets = np.concatenate(targets, 0)
+    return predictions, targets

@@ -21,12 +21,10 @@ class MlpPredictor(nn.Module):
 
     def forward(self, traj_h):
         pred = self.net(traj_h)
-        if self.pred_type == 'classification':
-            pred = pred.argmax(-1)
         return pred
 
     def loss(self, traj_h, label):
-        pred = self.net(traj_h)
+        pred = self.forward(traj_h)
 
         if self.pred_type == 'regression':
             loss = F.mse_loss(pred, label)
