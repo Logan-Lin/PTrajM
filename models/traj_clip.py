@@ -68,8 +68,19 @@ class TrajClip(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.cross_entropy = nn.CrossEntropyLoss()
-    
+
     def cal_traj_h(self, spatial, temporal, valid_lens):
+        """Calculate trajectories' embedding vectors given their spatio-temporal features.
+        The detailed definition of trajectories' spatial and temporal features can be refered to `data.py`.
+
+        Args:
+            spatial (FloatTensor): trajectories' spatial features, with shape (B, L, F_s).
+            temporal (FloatTensor): trajectories' temporal features, with shape (B, L, F_t).
+            valid_lens (LongTensor): valid lengths of trajectories in this batch.
+
+        Returns:
+            FloatTensor: the embedding vectors of this batch of trajectories, with shape (B, E).
+        """
         B, L = spatial.size(0), spatial.size(1)
         positions = repeat(torch.arange(L), 'L -> B L', B=B)
 

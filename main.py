@@ -45,23 +45,27 @@ def main():
         print(f'===SETTING {setting_i}/{len(settings)}===')
         SAVE_NAME = setting.get('save_name', None)
 
+        # Load and build training and testing datasets.
         train_traj_df = pd.read_hdf(setting['dataset']['train_traj_df'], key='trips')
         test_traj_df = pd.read_hdf(setting['dataset']['test_traj_df'], key='trips')
         train_dataset = TrajClipDataset(traj_df=train_traj_df)
         test_dataset = TrajClipDataset(traj_df=test_traj_df)
 
+        # Load road segments and POIs' coordinates and textual embeddings.
         road_embed = np.load(setting['dataset']['road_embed'])
-
         poi_df = pd.read_hdf(setting['dataset']['poi_df'], key='pois')
         poi_embed = np.load(setting['dataset']['poi_embed'])
         poi_coors = poi_df[[X_COL, Y_COL]].to_numpy()
 
+        # Build the trajectory embedding model and the downstream prediction head.
         traj_clip = TrajClip(road_embed=road_embed, poi_embed=poi_embed, poi_coors=poi_coors,
                              spatial_border=train_dataset.spatial_border, **setting['traj_clip']).to(device)
         pred_head = MlpPredictor(**setting['pred_head']).to(device)
 
         if 'pretrain' in setting:
+            # Pretrain the trajectory embedding model with self-supervised CLIP loss.
             if setting['pretrain'].get('load', False):
+                # Load previously saved model parameters.
                 traj_clip.load_state_dict(torch.load(os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}.pretrain'),
                                                      map_location=device))
             else:
@@ -72,10 +76,12 @@ def main():
                 pretrain_model(model=traj_clip, dataloader=pretrain_dataloader, **setting['pretrain']['config'])
 
                 if setting['pretrain'].get('save', True):
+                    # Save the pretrained model parameters.
                     utils.create_if_noexists(MODEL_CACHE_DIR)
                     torch.save(traj_clip.state_dict(), os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}.pretrain'))
 
         if 'finetune' in setting:
+            # Finetune the trajectory embedding model and the prediction head on downstream tasks.
             if setting['finetune'].get('load', False):
                 traj_clip.load_state_dict(torch.load(os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}_trajclip.finetune')))
                 pred_head.load_state_dict(torch.load(os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}_predhead.finetune')))
@@ -93,6 +99,7 @@ def main():
                     torch.save(pred_head.state_dict(), os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}_predhead.finetune'))
 
         if 'test' in setting:
+            # Test the model on downstream tasks.
             test_padder = fetch_task_padder(padder_name=setting['test']['padder']['name'],
                                             device=device, padder_params=setting['test']['padder']['params'])
             test_dataloader = DataLoader(test_dataset, shuffle=False, collate_fn=test_padder,
