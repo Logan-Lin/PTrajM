@@ -5,11 +5,13 @@ from einops import repeat
 
 from .encode import PositionalEmbedding, FourierEncode
 from data import COL_I
+from utils import cal_tensor_geo_distance, cal_tensor_courseAngle
+from .mamba.mamba import TrajMixerModel
 
 
 class TrajClip(nn.Module):
     def __init__(self, embed_size, d_model, road_embed, poi_embed, poi_coors, spatial_border,
-                 road_weight=1, poi_weight=1):
+                 device, road_weight=1, poi_weight=1, higher_feature_size=3):
         """The core model of Trajectory CLIP.
 
         Args:
@@ -21,6 +23,7 @@ class TrajClip(nn.Module):
             spatial_border (list): coordinates indicating the spatial border: [[x_min, y_min], [x_max, y_max]].
             road_weight (int, optional): loss weight of road view. Defaults to 1.
             poi_weight (int, optional): loss weight of poi view. Defaults to 1.
+            higher_feature_size(int, optional): number of trajectory higher-order features. Defaults to 3.
         """
 
         super().__init__()
@@ -36,8 +39,11 @@ class TrajClip(nn.Module):
             'spatial_embed_layer': nn.Sequential(nn.Linear(2, embed_size), nn.LeakyReLU(), nn.Linear(embed_size, d_model)),
             'temporal_embed_modules': nn.ModuleList([FourierEncode(embed_size) for _ in range(4)]),
             'temporal_embed_layer': nn.Sequential(nn.LeakyReLU(), nn.Linear(embed_size * 4, d_model)),
-            'seq_encoder': nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=d_model, nhead=8, dim_feedforward=256, batch_first=True),
-                                                 num_layers=2)
+            'seq_encoder': 
+            TrajMixerModel(d_model=d_model, n_layer=4, aux_feature_size=higher_feature_size,
+                                          device=device, dtype=torch.float32)
+            # nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=d_model, nhead=8, dim_feedforward=256, batch_first=True),
+            #                                      num_layers=2)
         })
 
         road_embed_mat = nn.Embedding(*road_embed.shape)
@@ -82,7 +88,39 @@ class TrajClip(nn.Module):
             FloatTensor: the embedding vectors of this batch of trajectories, with shape (B, E).
         """
         B, L = spatial.size(0), spatial.size(1)
-        positions = repeat(torch.arange(L), 'L -> B L', B=B)
+        positions = repeat(torch.arange(L), 'L -> B L', B=B).to(valid_lens.device)
+        batch_mask = get_batch_mask(B, L, valid_lens)
+
+        # 基于轨迹时空特征计算高阶特征
+        # spatial_check = spatial[0, valid_lens[0]-5:valid_lens[0]+1]
+        # temporal_check = temporal[0, valid_lens[0]-5:valid_lens[0]+1]
+        dists = cal_tensor_geo_distance(spatial[:, :-1, 0], spatial[:, :-1, 1], spatial[:, 1:, 0], spatial[:, 1:, 1])
+        # dists_check = dists[0, valid_lens[0]-5:valid_lens[0]+1]
+        time_diff = temporal[:, 1:, 1] - temporal[:, :-1, 1]
+        # time_diff_check = time_diff[0, valid_lens[0]-5:valid_lens[0]+1]
+        time_diff = time_diff.masked_fill(time_diff == 0, 1) # 除数不能为0
+        speeds = torch.div(dists, time_diff) # (B,L-1)
+        # speeds_check_1 = speeds[0, valid_lens[0]-5:valid_lens[0]+1]
+        speeds = torch.concatenate([speeds[:,:1], speeds],dim=-1) # 将轨迹起始速度v0置为求出的第一个速度
+        # speeds_check_2 = speeds[0, valid_lens[0]-5:valid_lens[0]+1]
+        speeds = speeds.masked_fill(batch_mask, 0) # need to do masked_fill for padding trajectories!
+        # speeds_check_3 = speeds[0, valid_lens[0]-5:valid_lens[0]+1] # [X,X,0]
+
+        speed_diff = speeds[:, 1:] - speeds[:, :-1]
+        accs = torch.div(speed_diff, time_diff) # (B,L-1)
+        accs = torch.concatenate([accs[:,:1], accs],dim=-1)
+
+        courseAngles = cal_tensor_courseAngle(spatial[:, :-1, 0], spatial[:, :-1, 1], spatial[:, 1:, 0], spatial[:, 1:, 1])
+        courseAngles = torch.concatenate([courseAngles[:,:1], courseAngles],dim=-1)
+        courseAngles = courseAngles.masked_fill(batch_mask, 0) # need to do masked_fill for padding trajectories!
+
+        norm_speeds = (speeds - speeds.min()) / (speeds.max() - speeds.min())
+        # speeds_border = [speeds.max(), speeds.min()]
+        norm_accs = (accs - accs.min()) / (accs.max() - accs.min())
+        # accs_border = [accs.max(), accs.min()]
+        norm_courseAngles = (courseAngles - courseAngles.min()) / (courseAngles.max() - courseAngles.min())
+        # courseAngles_border = [courseAngles.max(), courseAngles.min()]
+        aux_features = torch.stack([norm_speeds,norm_accs,norm_courseAngles],axis=-1)
 
         norm_spatial = (spatial - self.spatial_border[0].unsqueeze(0).unsqueeze(0)) / \
             (self.spatial_border[1] - self.spatial_border[0]).unsqueeze(0).unsqueeze(0)
@@ -97,8 +135,8 @@ class TrajClip(nn.Module):
 
         pos_encoding = self.pos_encode_layer(positions)
         traj_h = spatial_e + temporal_e + pos_encoding
-        batch_mask = get_batch_mask(B, L, valid_lens)
-        traj_h = self.traj_view['seq_encoder'](traj_h, src_key_padding_mask=batch_mask)
+        # traj_h = self.traj_view['seq_encoder'](traj_h, src_key_padding_mask=batch_mask)
+        traj_h = self.traj_view['seq_encoder'](traj_h, aux_features)
         traj_h = traj_h.masked_fill(batch_mask.unsqueeze(-1), 0).sum(1) / repeat(valid_lens, 'B -> B 1')
 
         return traj_h
@@ -128,7 +166,7 @@ class TrajClip(nn.Module):
             FloatTensor: the pre-training loss value of this batch.
         """
         B, L, _ = input_seq.shape
-        positions = repeat(torch.arange(L), 'L -> B L', B=B)
+        positions = repeat(torch.arange(L), 'L -> B L', B=B).to(input_seq.device)
         batch_mask = get_batch_mask(B, L, valid_lens)
         pos_encoding = self.pos_encode_layer(positions)
 

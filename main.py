@@ -4,6 +4,16 @@ from argparse import ArgumentParser
 
 import numpy as np
 import pandas as pd
+
+# torch 2.1中要求对os.environ的设置要在import torch前，遂更改顺序
+parser = ArgumentParser()
+parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, default="local_test") # required=True
+parser.add_argument('--cuda', help='index of the cuda device to use', type=int, default='7')
+args = parser.parse_args()
+
+os.environ['CUDA_VISIBLE_DEVICES'] = str(args.cuda)
+os.environ['PYDEVD_DISABLE_FILE_VALIDATION'] = '1'
+
 import torch
 from torch.utils.data import DataLoader
 
@@ -20,13 +30,6 @@ PRED_SAVE_DIR = os.environ.get('PRED_SAVE_DIR', 'predictions')
 
 
 def main():
-    parser = ArgumentParser()
-    parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, required=True)
-    parser.add_argument('--cuda', help='index of the cuda device to use', type=int)
-    args = parser.parse_args()
-
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(args.cuda)
-    os.environ['PYDEVD_DISABLE_FILE_VALIDATION'] = '1'
     device = f'cuda:0' if torch.cuda.is_available() and args.cuda is not None else 'cpu'
 
     # This key is an indicator of multiple things.
@@ -59,7 +62,7 @@ def main():
 
         # Build the trajectory embedding model and the downstream prediction head.
         traj_clip = TrajClip(road_embed=road_embed, poi_embed=poi_embed, poi_coors=poi_coors,
-                             spatial_border=train_dataset.spatial_border, **setting['traj_clip']).to(device)
+                             spatial_border=train_dataset.spatial_border, device=device, **setting['traj_clip']).to(device)
         pred_head = MlpPredictor(**setting['pred_head']).to(device)
 
         if 'pretrain' in setting:

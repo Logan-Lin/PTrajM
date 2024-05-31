@@ -1,2 +1,5 @@
 .vscode
 __pycache__
+predictions/
+saved_model/
+settings/cache/

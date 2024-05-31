@@ -19,12 +19,12 @@
             "pred_type": "classification"
         },
         "pretrain": {
-            "load": true,
+            "load": false,
             "save": true,
             "dataloader": {
                 "batch_size": 16,
                 "shuffle": true,
-                "num_workers": 1
+                "num_workers": 0
             },
             "padder": {},
             "config": {
@@ -33,12 +33,12 @@
             }
         },
         "finetune": {
-            "load": true,
+            "load": false,
             "save": true,
             "dataloader": {
                 "batch_size": 16,
                 "shuffle": true,
-                "num_workers": 1
+                "num_workers": 0
             },
             "padder": {
                 "name": "dp",
@@ -59,7 +59,7 @@
             "save": true,
             "dataloader": {
                 "batch_size": 16,
-                "num_workers": 1
+                "num_workers": 0
             },
             "padder": {
                 "name": "dp",
