@@ -1,6 +1,6 @@
 [
     {
-        "save_name": "0404",
+        "save_name": "0406",
         "dataset": {
             "train_traj_df": "./samples/small_chengdu.h5",
             "test_traj_df": "./samples/small_chengdu.h5",
@@ -15,8 +15,8 @@
         "pred_head": {
             "input_size": 128,
             "hidden_size": 256,
-            "output_size": 4315,
-            "pred_type": "classification"
+            "output_size": 1,
+            "pred_type": "regression"
         },
         "pretrain": {
             "load": false,
@@ -45,12 +45,12 @@
                 "params": {
                     "pred_len": 5,
                     "pred_cols": [
-                        "road"
+                        "delta_t"
                     ]
                 }
             },
             "config": {
-                "num_epoch": 5,
+                "num_epoch": 20,
                 "lr": 1e-3,
                 "ft_encoder": true
             }
@@ -66,7 +66,7 @@
                 "params": {
                     "pred_len": 5,
                     "pred_cols": [
-                        "road"
+                        "delta_t"
                     ]
                 }
             }
