@@ -28,7 +28,7 @@ class TrajClip(nn.Module):
 
         super().__init__()
 
-        self.poi_coors = nn.Parameter(torch.from_numpy(poi_coors).float(), requires_grad=False)
+        self.poi_coors = nn.Parameter(torch.from_numpy(poi_coors).float(), requires_grad=False) # n_pois：12439[chengdu]
         self.spatial_border = nn.Parameter(torch.tensor(spatial_border), requires_grad=False)
         self.road_weight = road_weight
         self.poi_weight = poi_weight
@@ -168,7 +168,7 @@ class TrajClip(nn.Module):
         B, L, _ = input_seq.shape
         positions = repeat(torch.arange(L), 'L -> B L', B=B).to(input_seq.device)
         batch_mask = get_batch_mask(B, L, valid_lens)
-        pos_encoding = self.pos_encode_layer(positions)
+        pos_encoding = self.pos_encode_layer(positions) # (B,L,D)
 
         # Trajectory (spatio-temporal) view.
         spatial = input_seq[:, :, COL_I['spatial']]  # (B, L, 2)
@@ -176,16 +176,16 @@ class TrajClip(nn.Module):
         traj_h = self.cal_traj_h(spatial, temporal, valid_lens)
 
         # Road view.
-        road = input_seq[:, :, COL_I['road']].long()
-        road_index_e = self.road_view['index_embed_layer'](road)
-        road_text_e = self.road_view['text_embed_layer'](self.road_view['text_embed_mat'](road))
+        road = input_seq[:, :, COL_I['road']].long() # (B,L)
+        road_index_e = self.road_view['index_embed_layer'](road) # (B,L,D)
+        road_text_e = self.road_view['text_embed_layer'](self.road_view['text_embed_mat'](road)) # (B,L,D)
         road_h = road_index_e + road_text_e + pos_encoding
-        road_h = self.poi_view['seq_encoder'](road_h, src_key_padding_mask=batch_mask)
+        road_h = self.road_view['seq_encoder'](road_h, src_key_padding_mask=batch_mask)
         road_h = road_h.masked_fill(batch_mask.unsqueeze(-1), 0).sum(1) / valid_lens.unsqueeze(-1)
 
         # POI view.
         poi = ((self.poi_coors.unsqueeze(0).unsqueeze(0) -
-                spatial.unsqueeze(2)) ** 2).sum(-1).argmin(dim=-1)
+                spatial.unsqueeze(2)) ** 2).sum(-1).argmin(dim=-1) # (B,L)
         poi_index_e = self.poi_view['index_embed_layer'](poi)
         poi_text_e = self.poi_view['text_embed_layer'](self.poi_view['text_embed_mat'](poi))
         poi_h = poi_index_e + poi_text_e + pos_encoding

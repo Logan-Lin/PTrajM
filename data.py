@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 from torch.utils.data import Dataset
+from tqdm import tqdm, trange
+from collections import Counter
 
 
 TRAJ_ID_COL = 'trip'
@@ -15,6 +17,8 @@ COL_I = {
     "road": 4
 }
 FEATURE_PAD = 0
+MIN_TRIP_LEN = 5
+MAX_TRIP_LEN = 120
 
 
 class TrajClipDataset(Dataset):
@@ -32,11 +36,17 @@ class TrajClipDataset(Dataset):
             traj_df (pd.DataFrame): contains points of all trajectories.
         """
         super().__init__()
-
-        self.traj_df = traj_df
+        # Filtering trips to keep the trajectories with length at [MIN_TRIP_LEN, MAX_TRIP_LEN]
+        traj_ids = []
+        for _, group in tqdm(traj_df.groupby(TRAJ_ID_COL), desc='Filtering trips', total=len(traj_df[TRAJ_ID_COL].unique()), leave=False, ncols=50):
+            if (not group.isna().any().any()) and group.shape[0] >= MIN_TRIP_LEN and group.shape[0] <= MAX_TRIP_LEN:
+                traj_ids.append(group.iloc[0]['trip'])
+        self.traj_ids = np.array(traj_ids)
+        self.traj_df = traj_df[traj_df['trip'].isin(self.traj_ids)].copy()
 
         self.traj_df['timestamp'] = self.traj_df['time'].apply(lambda x: x.timestamp())
-        self.traj_ids = self.traj_df[TRAJ_ID_COL].unique()
+        # self.traj_ids = self.traj_df[TRAJ_ID_COL].unique()
+        # self.max_trip_len = max(Counter(self.traj_df[TRAJ_ID_COL]).values()) # chengdu:2584, xian:2709
 
         spatial_border = traj_df[[X_COL, Y_COL]]
         self.spatial_border = [spatial_border.min().tolist(), spatial_border.max().tolist()]

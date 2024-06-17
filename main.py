@@ -69,7 +69,8 @@ def main():
             # Pretrain the trajectory embedding model with self-supervised CLIP loss.
             if setting['pretrain'].get('load', False):
                 # Load previously saved model parameters.
-                traj_clip.load_state_dict(torch.load(os.path.join(MODEL_CACHE_DIR, f'{SAVE_NAME}.pretrain'),
+                PRETRAIN_SAVE_NAME = setting['pretrain'].get('pretrain_save_name', SAVE_NAME) # one pretrained model may correspond to multiple types of finetune. 
+                traj_clip.load_state_dict(torch.load(os.path.join(MODEL_CACHE_DIR, f'{PRETRAIN_SAVE_NAME}.pretrain'),
                                                      map_location=device))
             else:
                 pretrain_dataloader = DataLoader(train_dataset,

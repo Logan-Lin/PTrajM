@@ -19,7 +19,7 @@ def pretrain_model(model, dataloader, num_epoch, lr):
     with trange(num_epoch, desc=bar_desc % 0.0) as bar:
         for epoch_i in bar:
             loss_values = []
-            for batch in tqdm(dataloader, desc='-->Traversing', leave=False):
+            for batch in tqdm(dataloader, desc='-->Traversing', leave=False, ncols=50):
                 optimizer.zero_grad()
                 loss = model.loss(*batch)
                 loss.backward()
@@ -52,7 +52,7 @@ def finetune_model(model, pred_head, dataloader, num_epoch, lr, ft_encoder=True)
     with trange(num_epoch, desc=bar_desc % 0.0) as bar:
         for epoch_i in bar:
             loss_values = []
-            for batch in tqdm(dataloader, desc='-->Traversing', leave=False):
+            for batch in tqdm(dataloader, desc='-->Traversing', leave=False, ncols=50):
                 *input_batch, label = batch
 
                 optimizer.zero_grad()
@@ -79,7 +79,7 @@ def test_model(model, pred_head, dataloader):
     pred_head.eval()
 
     predictions, targets = [], []
-    for batch in tqdm(dataloader, 'Testing'):
+    for batch in tqdm(dataloader, 'Testing', ncols=50):
         *input_batch, target = batch
         traj_h = model(*input_batch)
         pred = pred_head(traj_h)
