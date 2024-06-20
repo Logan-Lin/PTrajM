@@ -28,7 +28,7 @@ def pretrain_model(model, dataloader, num_epoch, lr):
             bar.set_description(bar_desc % np.mean(loss_values))
 
 
-def finetune_model(model, pred_head, dataloader, num_epoch, lr, ft_encoder=True):
+def finetune_model(model, pred_head, dataloader, num_epoch, lr, ft_encoder=True, denormalize=False):
     """Fine-tune the model with specific task labels.
 
     Args:
@@ -59,7 +59,7 @@ def finetune_model(model, pred_head, dataloader, num_epoch, lr, ft_encoder=True)
                 traj_h = model(*input_batch)
                 if not ft_encoder:
                     traj_h = traj_h.detach()
-                loss = pred_head.loss(traj_h, label)
+                loss = pred_head.loss(traj_h, label, denormalize)
                 loss.backward()
                 optimizer.step()
                 loss_values.append(loss.item())
@@ -67,7 +67,7 @@ def finetune_model(model, pred_head, dataloader, num_epoch, lr, ft_encoder=True)
 
 
 @torch.no_grad()
-def test_model(model, pred_head, dataloader):
+def test_model(model, pred_head, dataloader, denormalize=False):
     """Test the model with specific prediction tasks.
 
     Args:
@@ -83,6 +83,9 @@ def test_model(model, pred_head, dataloader):
         *input_batch, target = batch
         traj_h = model(*input_batch)
         pred = pred_head(traj_h)
+        if denormalize: # GPS预测值反归一化
+            pred = pred * (pred_head.spatial_border[1] - pred_head.spatial_border[0]).unsqueeze(0) + \
+                        pred_head.spatial_border[0].unsqueeze(0)
         predictions.append(pred.cpu().numpy())
         targets.append(target.cpu().numpy())
     predictions = np.concatenate(predictions, 0)

@@ -7,7 +7,7 @@ import pandas as pd
 
 # torch 2.1中要求对os.environ的设置要在import torch前，遂更改顺序
 parser = ArgumentParser()
-parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, default="local_test") # required=True
+parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, default="local_test_lnglat") # required=True
 parser.add_argument('--cuda', help='index of the cuda device to use', type=int, default='7')
 args = parser.parse_args()
 
@@ -18,7 +18,7 @@ import torch
 from torch.utils.data import DataLoader
 
 import utils
-from data import TrajClipDataset, PretrainPadder, fetch_task_padder, X_COL, Y_COL
+from data import TrajClipDataset, PretrainPadder, DpPadder, fetch_task_padder, X_COL, Y_COL
 from pipeline import pretrain_model, finetune_model, test_model
 from models.traj_clip import TrajClip
 from models.predictor import MlpPredictor
@@ -63,7 +63,7 @@ def main():
         # Build the trajectory embedding model and the downstream prediction head.
         traj_clip = TrajClip(road_embed=road_embed, poi_embed=poi_embed, poi_coors=poi_coors,
                              spatial_border=train_dataset.spatial_border, device=device, **setting['traj_clip']).to(device)
-        pred_head = MlpPredictor(**setting['pred_head']).to(device)
+        pred_head = MlpPredictor(spatial_border=train_dataset.spatial_border, **setting['pred_head']).to(device)
 
         if 'pretrain' in setting:
             # Pretrain the trajectory embedding model with self-supervised CLIP loss.
@@ -94,7 +94,11 @@ def main():
                                                     device=device, padder_params=setting['finetune']['padder']['params'])
                 finetune_dataloader = DataLoader(train_dataset, collate_fn=finetune_padder,
                                                  **setting['finetune']['dataloader'])
-                finetune_model(model=traj_clip, pred_head=pred_head, dataloader=finetune_dataloader,
+                if_denormalize = False
+                if isinstance(finetune_padder, DpPadder):
+                    if sorted(finetune_padder.pred_cols) == sorted([Y_COL, X_COL]): # 预测'lng''lat'
+                        if_denormalize = True
+                finetune_model(model=traj_clip, pred_head=pred_head, dataloader=finetune_dataloader, denormalize=if_denormalize,
                                **setting['finetune']['config'])
 
                 if setting['finetune'].get('save', True):
@@ -108,7 +112,11 @@ def main():
                                             device=device, padder_params=setting['test']['padder']['params'])
             test_dataloader = DataLoader(test_dataset, shuffle=False, collate_fn=test_padder,
                                          **setting['test']['dataloader'])
-            predictions, targets = test_model(model=traj_clip, pred_head=pred_head, dataloader=test_dataloader)
+            if_denormalize = False
+            if isinstance(test_padder, DpPadder):
+                if sorted(test_padder.pred_cols) == sorted([Y_COL, X_COL]): # 预测'lng''lat'
+                    if_denormalize = True
+            predictions, targets = test_model(model=traj_clip, pred_head=pred_head, dataloader=test_dataloader, denormalize=if_denormalize)
             if setting['test'].get('save', False):
                 utils.create_if_noexists(os.path.join(PRED_SAVE_DIR, SAVE_NAME))
                 np.save(os.path.join(PRED_SAVE_DIR, SAVE_NAME, 'predictions.npy'), predictions)
