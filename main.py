@@ -7,7 +7,7 @@ import pandas as pd
 
 # torch 2.1中要求对os.environ的设置要在import torch前，遂更改顺序
 parser = ArgumentParser()
-parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, default="local_test_lnglat") # required=True
+parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, default="local_test") # required=True
 parser.add_argument('--cuda', help='index of the cuda device to use', type=int, default='7')
 args = parser.parse_args()
 
@@ -62,7 +62,7 @@ def main():
 
         # Build the trajectory embedding model and the downstream prediction head.
         traj_clip = TrajClip(road_embed=road_embed, poi_embed=poi_embed, poi_coors=poi_coors,
-                             spatial_border=train_dataset.spatial_border, device=device, **setting['traj_clip']).to(device)
+                             spatial_border=train_dataset.spatial_border, device=device, use_mamba2="_mamba2" in SAVE_NAME,**setting['traj_clip']).to(device)
         pred_head = MlpPredictor(spatial_border=train_dataset.spatial_border, **setting['pred_head']).to(device)
 
         if 'pretrain' in setting:

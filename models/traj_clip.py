@@ -7,11 +7,12 @@ from .encode import PositionalEmbedding, FourierEncode
 from data import COL_I
 from utils import cal_tensor_geo_distance, cal_tensor_courseAngle
 from .mamba.mamba import TrajMixerModel
+from .mamba2.mamba2 import TrajMixerModel2
 
 
 class TrajClip(nn.Module):
     def __init__(self, embed_size, d_model, road_embed, poi_embed, poi_coors, spatial_border,
-                 device, road_weight=1, poi_weight=1, higher_feature_size=3):
+                 device, use_mamba2=True, road_weight=1, poi_weight=1, higher_feature_size=3):
         """The core model of Trajectory CLIP.
 
         Args:
@@ -40,6 +41,8 @@ class TrajClip(nn.Module):
             'temporal_embed_modules': nn.ModuleList([FourierEncode(embed_size) for _ in range(4)]),
             'temporal_embed_layer': nn.Sequential(nn.LeakyReLU(), nn.Linear(embed_size * 4, d_model)),
             'seq_encoder': 
+            TrajMixerModel2(d_model=d_model, n_layer=4, d_intermediate=0, aux_feature_size=higher_feature_size,
+                                          device=device, dtype=torch.float32) if use_mamba2 else \
             TrajMixerModel(d_model=d_model, n_layer=4, aux_feature_size=higher_feature_size,
                                           device=device, dtype=torch.float32)
             # nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=d_model, nhead=8, dim_feedforward=256, batch_first=True),
