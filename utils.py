@@ -34,6 +34,7 @@ def create_if_noexists(path):
 #         bearing = bearing + 360
 #     return bearing
 def cal_courseAngle(lng1, lat1, lng2, lat2):
+    lng1, lat1, lng2, lat2 = map(np.radians, [lng1, lat1, lng2, lat2])
     y = np.sin(lng2-lng1) * np.cos(lat2)
     x = np.cos(lat1) * np.sin(lat2) - np.sin(lat1) * np.cos(lat2) * np.cos(lng2-lng1)
     bearing = np.arctan2(y, x)
@@ -60,6 +61,7 @@ def cal_tensor_geo_distance(lng1:torch.tensor, lat1:torch.tensor, lng2:torch.ten
     return distance
 
 def cal_tensor_courseAngle(lng1:torch.tensor, lat1:torch.tensor, lng2:torch.tensor, lat2:torch.tensor):
+    lng1, lat1, lng2, lat2 = map(torch.deg2rad, [lng1, lat1, lng2, lat2])
     y = torch.sin(lng2-lng1) * torch.cos(lat2)
     x = torch.cos(lat1) * torch.sin(lat2) - torch.sin(lat1) * torch.cos(lat2) * torch.cos(lng2-lng1)
     bearing = torch.arctan2(y, x)
