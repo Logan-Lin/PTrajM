@@ -33,7 +33,8 @@ from .ssd_combined import mamba_split_conv1d_scan_combined
 class Mamba2(nn.Module):
     def __init__(
         self,
-        d_model, # 模型的隐藏层维度 D
+        d_model, # 模型输入输出维度 D
+        d_inner=0, # 模型内部维度
         d_state=128, # 状态空间的维度 N [从Mamba-1的16扩大到128]
         d_conv=4, # 1D卷积的卷积核大小
         conv_init=None,
@@ -73,8 +74,8 @@ class Mamba2(nn.Module):
         self.world_size = 1 if process_group is None else process_group.size()
         self.local_rank = 0 if process_group is None else process_group.rank()
         # self.d_inner: 内部维度，即扩展后的维度
-        self.d_inner = (self.expand * self.d_model) // self.world_size
-        assert self.d_inner * self.world_size == self.expand * self.d_model
+        self.d_inner = d_inner // self.world_size if d_inner else (self.expand * self.d_model) // self.world_size
+        assert self.d_inner * self.world_size == d_inner if d_inner else self.expand * self.d_model # 确保整除
         self.headdim = headdim
         # self.d_ssm: ssm的（总）维度
         self.d_ssm = self.d_inner if d_ssm is None else d_ssm // self.world_size

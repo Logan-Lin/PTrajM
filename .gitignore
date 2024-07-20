@@ -2,7 +2,7 @@
 __pycache__
 predictions/
 saved_model/
-settings/cache/
+settings/*/
 .ipynb_checkpoints/
 *.ipynb
 settings/chengdu_*

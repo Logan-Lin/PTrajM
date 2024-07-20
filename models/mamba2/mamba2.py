@@ -15,7 +15,7 @@ import torch.nn as nn
 # from mamba_ssm.models.config_mamba import MambaConfig
 # from mamba_ssm.modules.mamba_simple import Mamba
 # from mamba_ssm.modules.mamba2 import Mamba2
-from models.mamba.traj_mambaBlock import Mamba
+# from models.mamba.traj_mambaBlock import Mamba
 from .traj_mambaBlock2 import Mamba2
 from mamba_ssm.modules.mha import MHA
 from mamba_ssm.modules.mlp import GatedMLP
@@ -29,10 +29,8 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
-from mamba_ssm.distributed.tensor_parallel import ColumnParallelLinear
-
 """ 更灵活地构建模型组件block：
-   mixer可以选用Mamba1(默认，与v1版本一致)、Mamba1 和 multihead attention
+   mixer可以选用Mamba1(默认，与v1版本一致)、Mamba2 和 multihead attention
    block中可加入MLP（新增），hidden dim 由参数 d_intermediate 给定
 
 最近新出的混合模型（Jamba、Zamba）增加了一些注意力层来提高模型质量。
@@ -42,6 +40,9 @@ def create_block(
     d_model,
     d_intermediate,
     aux_feature_size = 0,
+    d_state = 128,
+    headdim = 64,
+    d_inner = 0,
     ssm_cfg=None,
     attn_layer_idx=None, # 指定某些层的mixer选用multihead attention
     attn_cfg=None,
@@ -61,19 +62,29 @@ def create_block(
         attn_cfg = {}
     factory_kwargs = {"device": device, "dtype": dtype}
     if layer_idx not in attn_layer_idx:
-        # Create a copy of the config to modify
-        ssm_cfg = copy.deepcopy(ssm_cfg) if ssm_cfg is not None else {}
-        # 改成了默认用Mamba2！！！！
-        ssm_layer = ssm_cfg.pop("layer", "Mamba2")
-        if ssm_layer not in ["Mamba1", "Mamba2"]:
-            raise ValueError(f"Invalid ssm_layer: {ssm_layer}, only support Mamba1 and Mamba2")
-        mixer_cls = partial(
-            Mamba2 if ssm_layer == "Mamba2" else Mamba,
-            aux_feature_size=aux_feature_size,
-            layer_idx=layer_idx,
-            **ssm_cfg,
-            **factory_kwargs
-        )
+        # 修改：该层不为注意力层时，mixer_cls只能使用Mamba2
+        mixer_cls = partial(Mamba2,
+                            d_inner=d_inner,
+                            d_state=d_state,
+                            headdim=headdim,
+                            aux_feature_size=aux_feature_size,
+                            layer_idx=layer_idx,
+                            **ssm_cfg,
+                            **factory_kwargs
+                            )
+        # # Create a copy of the config to modify
+        # ssm_cfg = copy.deepcopy(ssm_cfg) if ssm_cfg is not None else {}
+        # # 改成了默认用Mamba2！！！！
+        # ssm_layer = ssm_cfg.pop("layer", "Mamba2")
+        # if ssm_layer not in ["Mamba1", "Mamba2"]:
+        #     raise ValueError(f"Invalid ssm_layer: {ssm_layer}, only support Mamba1 and Mamba2")
+        # mixer_cls = partial(
+        #     Mamba2 if ssm_layer == "Mamba2" else Mamba,
+        #     aux_feature_size=aux_feature_size,
+        #     layer_idx=layer_idx,
+        #     **ssm_cfg,
+        #     **factory_kwargs
+        # )
     else:
         mixer_cls = partial(MHA, layer_idx=layer_idx, **attn_cfg, **factory_kwargs)
     norm_cls = partial(
@@ -106,9 +117,12 @@ class TrajMixerModel2(nn.Module):
         d_intermediate: int,
         # vocab_size: int,
         aux_feature_size: int,
+        d_state: int = 128, 
+        headdim: int = 64,
+        d_inner: int = 0, 
         ssm_cfg=None,
-        attn_layer_idx=None,
-        attn_cfg=None,
+        # attn_layer_idx=None,
+        # attn_cfg=None,
         norm_epsilon: float = 1e-5,
         rms_norm: bool = True,
         initializer_cfg=None,
@@ -118,8 +132,6 @@ class TrajMixerModel2(nn.Module):
         dtype=None,
         # 与class Mamba2的相应参数的默认值保持一致↓
         bias=False, # 其他层（如线性层）是否使用偏置项
-        process_group=None,
-        sequence_parallel=True, # 是否应用序列并行策略
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -143,9 +155,12 @@ class TrajMixerModel2(nn.Module):
                     d_model,
                     d_intermediate=d_intermediate,
                     aux_feature_size=aux_feature_size,
+                    d_state=d_state,
+                    headdim=headdim,
+                    d_inner=d_inner,
                     ssm_cfg=ssm_cfg,
-                    attn_layer_idx=attn_layer_idx,
-                    attn_cfg=attn_cfg,
+                    # attn_layer_idx=attn_layer_idx,
+                    # attn_cfg=attn_cfg,
                     norm_epsilon=norm_epsilon,
                     rms_norm=rms_norm,
                     residual_in_fp32=residual_in_fp32,
@@ -165,13 +180,7 @@ class TrajMixerModel2(nn.Module):
             dt_dim = self.layers[i].mixer.nheads
             self.bcdt_proj_outdim += (b_dim + c_dim + dt_dim)
             self.bcdt_dim_list.extend([b_dim, c_dim, dt_dim])
-        if process_group is None:
-            self.bcdt_proj = nn.Linear(aux_feature_size, self.bcdt_proj_outdim, bias=bias, **factory_kwargs)
-        else:
-            world_size = 1 if process_group is None else process_group.size()
-            self.bcdt_proj = ColumnParallelLinear(aux_feature_size, self.bcdt_proj_outdim * world_size, bias=bias,
-                                                process_group=process_group, sequence_parallel=sequence_parallel,
-                                                **factory_kwargs)
+        self.bcdt_proj = nn.Linear(aux_feature_size, self.bcdt_proj_outdim, bias=bias, **factory_kwargs)
 
         self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(
             d_model, eps=norm_epsilon, **factory_kwargs
