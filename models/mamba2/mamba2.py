@@ -171,16 +171,24 @@ class TrajMixerModel2(nn.Module):
                 for i in range(n_layer)
             ]
         )
+        print(f"param check:")
+        print(f"d_model={self.layers[0].mixer.d_model}, d_inner={self.layers[0].mixer.d_inner}")
+        print(f"d_state={self.layers[0].mixer.d_state}, headdim={self.layers[0].mixer.headdim}")
 
         # 构造SSM输入相关参数B,C,Δ的线性投影层
-        self.bcdt_proj_outdim = 0
-        self.bcdt_dim_list = []
-        for i in range(n_layer):
-            b_dim = c_dim = self.layers[i].mixer.ngroups * self.layers[i].mixer.d_state
-            dt_dim = self.layers[i].mixer.nheads
-            self.bcdt_proj_outdim += (b_dim + c_dim + dt_dim)
-            self.bcdt_dim_list.extend([b_dim, c_dim, dt_dim])
-        self.bcdt_proj = nn.Linear(aux_feature_size, self.bcdt_proj_outdim, bias=bias, **factory_kwargs)
+        if aux_feature_size:
+            self.bcdt_proj_outdim = 0
+            self.bcdt_dim_list = []
+            for i in range(n_layer):
+                b_dim = c_dim = self.layers[i].mixer.ngroups * self.layers[i].mixer.d_state
+                dt_dim = self.layers[i].mixer.nheads
+                self.bcdt_proj_outdim += (b_dim + c_dim + dt_dim)
+                self.bcdt_dim_list.extend([b_dim, c_dim, dt_dim])
+            self.bcdt_proj = nn.Linear(aux_feature_size, self.bcdt_proj_outdim, bias=bias, **factory_kwargs)
+        else:
+            self.bcdt_proj = None
+            self.num_bcdt = n_layer * 3
+            print("Don't use trajectory's higher-order features")
 
         self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(
             d_model, eps=norm_epsilon, **factory_kwargs
@@ -201,13 +209,13 @@ class TrajMixerModel2(nn.Module):
             for i, layer in enumerate(self.layers)
         }
 
-    def forward(self, hidden_states, aux_features=None, inference_params=None, **mixer_kwargs):
+    def forward(self, hidden_states, aux_features, inference_params=None, **mixer_kwargs):
         # hidden_states = self.embedding(input_ids)
-        if aux_features is not None:
+        if self.bcdt_proj is not None:
             all_bcdt = self.bcdt_proj(aux_features) # 一次性生成所有block的SSM输入相关参数B,C,Δ
             all_bcdt_tuple = torch.split(all_bcdt, self.bcdt_dim_list, dim=-1)
         else:
-            all_bcdt_tuple = (None,) * len(self.bcdt_dim_list)
+            all_bcdt_tuple = (None,) * self.num_bcdt
 
         residual = None
         for i, layer in enumerate(self.layers):

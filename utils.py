@@ -174,3 +174,51 @@ def cal_classification_metric(labels, pres):
                   index=['macro_f1', 'macro_rec'] +
                   [f'acc@{n}' for n in [1] + n_list])
     return s
+
+
+def cal_mean_rank(scores, target_indices):
+    """
+    Calculate the Mean Rank metric.
+
+    :param scores: A 2D NumPy array where each row contains the predicted scores for each label.
+    :param target_indices: A 1D NumPy array containing the index of the target item in each prediction.
+    :return: The value of Mean Rank.
+    """
+    # Get the ranks of each score in descending order
+    ranks = scores.argsort(axis=1)[:, ::-1].argsort(axis=1) + 1
+
+    # Extract the ranks of the target indices
+    target_indices = target_indices.astype(int)
+    target_ranks = ranks[np.arange(len(target_indices)), target_indices]
+
+    # Calculate the mean of these ranks
+    mean_rank_value = np.mean(target_ranks)
+    return mean_rank_value
+
+def cal_search_metric(labels, pres):
+    """
+    Calculates all metrics for similar trajectory search.
+
+    :param labels: classification label, with shape (N).
+    :param pres: predicted classification distribution, with shape (N, num_class).
+    """
+    # s = cal_classification_metric(labels, pres)
+    pres_index = pres.argmax(-1)  # (N)
+    acc = accuracy_score(labels, pres_index)
+    acc5 = top_n_accuracy(labels, pres, 5)
+    mean_rank = cal_mean_rank(pres, labels)
+    
+    s = pd.Series([acc, acc5] + mean_rank,
+                  index=[f'acc@{n}' for n in [1,5]] + ["mean_rank"])
+    return s
+
+
+def cal_model_size(model):
+    """ Calculate the total learnable parameter size (in megabytes) of a torch module. """
+    param_size = 0
+    for param in model.parameters():
+        if param.requires_grad:
+            param_size += param.nelement() * param.element_size()
+
+    size_all_mb = param_size / 1024**2
+    return size_all_mb

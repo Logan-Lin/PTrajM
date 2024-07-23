@@ -1,0 +1,54 @@
+[
+    {
+        "save_name": "0404_mamba2",
+        "dataset": {
+            "train_traj_df": "./samples/small_chengdu.h5",
+            "test_traj_df": "./samples/small_chengdu.h5",
+            "poi_df": "./samples/small_chengdu.h5",
+            "poi_embed": "./samples/small_chengdu_poi_embed.npy",
+            "road_embed": "./samples/small_chengdu_road_embed.npy"
+        },
+        "traj_clip": {
+            "embed_size": 64,
+            "d_model": 128
+        },
+        "pred_head": {
+            "input_size": 128,
+            "hidden_size": 256,
+            "output_size": 4315,
+            "pred_type": "classification"
+        },
+        "pretrain": {
+            "load": true,
+            "save": true,
+            "dataloader": {
+                "batch_size": 16,
+                "shuffle": true,
+                "num_workers": 0
+            },
+            "padder": {},
+            "config": {
+                "num_epoch": 5,
+                "lr": 1e-3
+            }
+        },
+        "test": {
+            "task": "search",
+            "save": true,
+            "search_data_params":{
+                "num_target": 30,
+                "num_negative": 17,
+                "neg_random_choice": false
+            },
+            "dataloader": {
+                "batch_size": 16,
+                "num_workers": 0
+            },
+            "padder": {
+                "name": "search",
+                "params": {
+                }
+            }
+        }
+    }
+]

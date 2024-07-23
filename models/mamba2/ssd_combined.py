@@ -769,6 +769,7 @@ class MambaSplitConv1dScanCombinedFn(torch.autograd.Function):
             zx0, z, xBC = torch.split(zxbcdt, [2 * d_nonssm, dim, dim], dim=-1)
         else:
             zx0, z, xBC, dt = torch.split(zxbcdt, [2 * d_nonssm, dim, dim + ngroups * dstate * 2, nheads], dim=-1)
+            xBC = xBC.contiguous()
         
         seq_idx = seq_idx.contiguous() if seq_idx is not None else None
         xBC_conv = rearrange(
@@ -857,6 +858,7 @@ class MambaSplitConv1dScanCombinedFn(torch.autograd.Function):
             zx0, z, xBC = torch.split(zxbcdt, [2 * d_nonssm, dim, dim], dim=-1)
         else:
             zx0, z, xBC, dt = torch.split(zxbcdt, [2 * d_nonssm, dim, dim + 2 * ctx.ngroups * dstate, nheads], dim=-1)
+            xBC = xBC.contiguous()
 
         # Recompute x, B, C
         xBC_conv = rearrange(
