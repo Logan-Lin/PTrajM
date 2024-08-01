@@ -92,10 +92,10 @@ class Mamba2(nn.Module):
         self.chunk_size = chunk_size
         self.use_mem_eff_path = use_mem_eff_path
         self.layer_idx = layer_idx
-        self.aux_feature_size = aux_feature_size
+        self.no_gen_bcdt = (aux_feature_size > 0)
 
         # Order: [z, x, B, C, dt]   z,x: self.d_inner;  B,C: self.ngroups * self.d_state; dt: self.nheads
-        d_in_proj = 2 * self.d_inner if self.aux_feature_size else 2 * self.d_inner + 2 * self.ngroups * self.d_state + self.nheads
+        d_in_proj = 2 * self.d_inner if self.no_gen_bcdt else 2 * self.d_inner + 2 * self.ngroups * self.d_state + self.nheads
         # 输入线性变换层
             # 把Mamba Block结构的两个分支中的输入线性层合并，用一个线性层实现！！
         """ 改动1：输入线性变换层生成 x, z 的同时也生成了 SSM 参数 B,C,Δ
@@ -107,7 +107,7 @@ class Mamba2(nn.Module):
                                                 process_group=self.process_group, sequence_parallel=self.sequence_parallel,
                                                 **factory_kwargs)
 
-        conv_dim = self.d_ssm if self.aux_feature_size else self.d_ssm + 2 * self.ngroups * self.d_state # Order: [x, B, C]
+        conv_dim = self.d_ssm if self.no_gen_bcdt else self.d_ssm + 2 * self.ngroups * self.d_state # Order: [x, B, C]
         # 一维卷积层，执行深度卷积（Mamba模型的特色之一，用于处理序列数据）
             # 沿着序列长度L的方向应用卷积核
             # 每个输入通道被单独卷积到每个输出通道，意味着每个输出通道的结果是通过仅与一个输入通道卷积得到的
@@ -176,8 +176,8 @@ class Mamba2(nn.Module):
             (in case batch is small).
         Returns: same shape as u
         """
-        # 要么不使用高阶特征，ssm参数由输入构造；否则需确保传入参数B, C, dt不为None
-        assert self.aux_feature_size==0 or B is not None
+        # 要么ssm参数由输入构造；否则需确保传入参数B, C, dt不为None
+        assert not self.no_gen_bcdt or B is not None
         # assert self.aux_feature_size==0 or (self.aux_feature_size and B is not None)
 
         # 获取输入的维度：batch, seqlen, dim
@@ -216,8 +216,8 @@ class Mamba2(nn.Module):
                 A,
                 D=rearrange(self.D, "(h p) -> h p", p=self.headdim) if self.D_has_hdim else self.D,
                 chunk_size=self.chunk_size,
-                B=rearrange(B, "b l (g n) -> b l g n", g=self.ngroups) if self.aux_feature_size else None, # (B, L, self.ngroups, self.d_state)
-                C=rearrange(C, "b l (g n) -> b l g n", g=self.ngroups) if self.aux_feature_size else None, # (B, L, self.ngroups, self.d_state)
+                B=rearrange(B, "b l (g n) -> b l g n", g=self.ngroups) if self.no_gen_bcdt else None, # (B, L, self.ngroups, self.d_state)
+                C=rearrange(C, "b l (g n) -> b l g n", g=self.ngroups) if self.no_gen_bcdt else None, # (B, L, self.ngroups, self.d_state)
                 dt=dt,
                 seq_idx=seq_idx,
                 activation=self.activation,
@@ -241,7 +241,7 @@ class Mamba2(nn.Module):
             # zxbcdt.shape[-1] = d_in_proj = 2 * self.d_inner + 2 * self.ngroups * self.d_state + self.nheads
             # self.d_ssm = self.d_inner if d_ssm is None else d_ssm // self.world_size
             """ d_mlp = self.d_inner - self.d_ssm """
-            if self.aux_feature_size:
+            if self.no_gen_bcdt:
                 d_mlp = (zxbcdt.shape[-1] - 2 * self.d_ssm) // 2
                 z0, x0, z, xBC = torch.split(
                     zxbcdt,
@@ -282,7 +282,7 @@ class Mamba2(nn.Module):
                     activation=self.activation,
                 ).transpose(1, 2)
             
-            if self.aux_feature_size: # 变量xBC即为x，B,C 用传入参数
+            if self.no_gen_bcdt: # 变量xBC即为x，B,C 用传入参数
                 x = xBC
             else:
                 # 从Conv的输出直接分割出x, B, C   [删除了将SSM输入x映射为SSM参数(B,C,Δ)的线性投影层]
@@ -323,13 +323,13 @@ class Mamba2(nn.Module):
     def step(self, hidden_states, conv_state, ssm_state, bcdt=(None, None, None)): # hidden_states only have 1 token, seqlen=1
         dtype = hidden_states.dtype
         assert hidden_states.shape[1] == 1, "Only support decoding with 1 token at a time for now"
-        if self.aux_feature_size:
+        if self.no_gen_bcdt:
             assert bcdt[0] is not None and bcdt[0].shape[1] == 1, "Only support decoding with 1 token at a time for now"
         
         zxbcdt = self.in_proj(hidden_states.squeeze(1))  # (B 2D)   2D=d_in_proj
         
         # d_mlp = self.d_inner - self.d_ssm
-        if self.aux_feature_size:
+        if self.no_gen_bcdt:
             d_mlp = (zxbcdt.shape[-1] - 2 * self.d_ssm) // 2
             z0, x0, z, xBC = torch.split(
                 zxbcdt,
@@ -366,7 +366,7 @@ class Mamba2(nn.Module):
                 self.activation,
             )
 
-        if self.aux_feature_size: # 变量xBC即为x，B,C 用传入参数
+        if self.no_gen_bcdt: # 变量xBC即为x，B,C 用传入参数
             x = xBC
             B, C, dt = bcdt[0].squeeze(1), bcdt[1].squeeze(1), bcdt[2].squeeze(1)
         else:
