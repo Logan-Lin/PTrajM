@@ -61,7 +61,7 @@ def main():
 
         # Build the trajectory embedding model and the downstream prediction head.
         traj_clip = TrajClip(road_embed=road_embed, poi_embed=poi_embed, poi_coors=poi_coors,
-                             spatial_border=train_dataset.spatial_border, device=device, use_mamba2="_mamba2" in SAVE_NAME,**setting['traj_clip']).to(device)
+                             spatial_border=train_dataset.spatial_border, device=device, **setting['traj_clip']).to(device)
         pred_head = MlpPredictor(spatial_border=train_dataset.spatial_border, **setting['pred_head']).to(device)
         size_all_mb = utils.cal_model_size(traj_clip.traj_view)
         print(f"Trajectory-Mamba Model size: {size_all_mb} MBytes.")
