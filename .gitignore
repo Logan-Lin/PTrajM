@@ -1,9 +1,3 @@
 .vscode
 __pycache__
-predictions/
-saved_model/
-settings/*/
-.ipynb_checkpoints/
-*.ipynb
-settings/chengdu_*
-settings/xian_*
+.DS_Store

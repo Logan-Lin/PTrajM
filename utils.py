@@ -115,8 +115,7 @@ def cal_distance_metric(label, pres, lng_col, lat_col):
 
 def top_n_accuracy(truths, preds, n):
     """ Calculcate Acc@N metric. """
-    # best_n = np.argsort(preds, axis=1)[:, -n:] # 升序排列求后n个
-    best_n = np.argsort(-preds, axis=1)[:, :n] # 降序排列求前n个
+    best_n = np.argsort(-preds, axis=1)[:, :n]
     successes = 0
     for i, truth in enumerate(truths):
         if truth in best_n[i, :]:

@@ -53,8 +53,6 @@ class TrajClipDataset(Dataset):
         self.traj_df = traj_df[traj_df['trip'].isin(self.traj_ids)].copy()
 
         self.traj_df['timestamp'] = self.traj_df['time'].apply(lambda x: x.timestamp())
-        # self.traj_ids = self.traj_df[TRAJ_ID_COL].unique()
-        # self.max_trip_len = max(Counter(self.traj_df[TRAJ_ID_COL]).values()) # chengdu:2584, xian:2709
 
         spatial_border = traj_df[[X_COL, Y_COL]]
         self.spatial_border = [spatial_border.min().tolist(), spatial_border.max().tolist()]
@@ -228,9 +226,7 @@ class TrajectorySearchTestdata:
         num_negative = min(len(self.trajs) - num_target, num_negative)
         if neg_random_choice:
             neg_indices = []
-            # neg_trip_ids = [i for i in range(len(self.trajs)) if i not in sampled_trip_ids]
             for i in trange(num_target, desc='Gathering sim idx'):
-                # 除自身对应的原始轨迹，其他轨迹都可看作negative trajectory
                 neg_trip_ids = np.delete(np.arange(len(self.trajs)), sampled_trip_ids[i])
                 neg_indice = np.random.choice(neg_trip_ids, num_negative, replace=False)
                 neg_indices.append(neg_indice)
@@ -258,7 +254,6 @@ class TrajectorySearchTestdata:
                 # negative index: the farthest neighbors of the query
                 farthest_idx = farthest_knn.kneighbors([arr], return_distance=False)
                 # choose num_negtive neighbors randomly
-                # print(farthest_idx[0])
                 farthest_idx = np.random.choice(farthest_idx[0], num_negative, replace=False)
                 neg_indices.append(farthest_idx)
         self.neg_indices = np.array(neg_indices)
@@ -377,7 +372,6 @@ class SearchPadder:
         """
         traj_batch, valid_lens = [], []
         for traj in raw_batch:
-            # traj = row[[X_COL, Y_COL, T_COL, DT_COL, ROAD_COL]].to_numpy()
             valid_len = traj.shape[0]
             traj_batch.append(traj)
             valid_lens.append(valid_len)
