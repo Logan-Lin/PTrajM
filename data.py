@@ -26,8 +26,7 @@ COL_I = {
 FEATURE_PAD = 0
 MIN_TRIP_LEN = 5
 MAX_TRIP_LEN = 120
-SEARCH_META_DIR = "/data/LiuYichen/TrajClip_datasets/processed_data/search_meta"
-
+SEARCH_META_DIR = os.environ.get('SEARCH_META_DIR', os.path.join('processed_data', 'search_meta'))
 
 class TrajClipDataset(Dataset):
     """Dataset support class for TrajCLIP.
