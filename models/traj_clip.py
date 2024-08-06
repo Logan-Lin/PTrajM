@@ -206,20 +206,12 @@ class TrajClip(nn.Module):
         B, L = spatial.size(0), spatial.size(1)
         batch_mask = get_batch_mask(B, L, valid_lens)
 
-        # 基于轨迹时空特征计算高阶特征
-        # spatial_check = spatial[0, valid_lens[0]-5:valid_lens[0]+1]
-        # temporal_check = temporal[0, valid_lens[0]-5:valid_lens[0]+1]
         dists = cal_tensor_geo_distance(spatial[:, :-1, 0], spatial[:, :-1, 1], spatial[:, 1:, 0], spatial[:, 1:, 1])
-        # dists_check = dists[0, valid_lens[0]-5:valid_lens[0]+1]
         time_diff = temporal[:, 1:, 1] - temporal[:, :-1, 1]
-        # time_diff_check = time_diff[0, valid_lens[0]-5:valid_lens[0]+1]
-        time_diff = time_diff.masked_fill(time_diff == 0, 1) # 除数不能为0
+        time_diff = time_diff.masked_fill(time_diff == 0, 1)
         speeds = torch.div(dists, time_diff) # (B,L-1)
-        # speeds_check_1 = speeds[0, valid_lens[0]-5:valid_lens[0]+1]
         speeds = torch.concatenate([speeds[:,:1], speeds],dim=-1) # 将轨迹起始速度v0置为求出的第一个速度
-        # speeds_check_2 = speeds[0, valid_lens[0]-5:valid_lens[0]+1]
         speeds = speeds.masked_fill(batch_mask, 0) # need to do masked_fill for padding trajectories!
-        # speeds_check_3 = speeds[0, valid_lens[0]-5:valid_lens[0]+1] # [X,X,0]
 
         speed_diff = speeds[:, 1:] - speeds[:, :-1]
         accs = torch.div(speed_diff, time_diff) # (B,L-1)
@@ -230,11 +222,8 @@ class TrajClip(nn.Module):
         courseAngles = courseAngles.masked_fill(batch_mask, 0) # need to do masked_fill for padding trajectories!
 
         norm_speeds = (speeds - speeds.min()) / (speeds.max() - speeds.min())
-        # speeds_border = [speeds.max(), speeds.min()]
         norm_accs = (accs - accs.min()) / (accs.max() - accs.min())
-        # accs_border = [accs.max(), accs.min()]
         norm_courseAngles = (courseAngles - courseAngles.min()) / (courseAngles.max() - courseAngles.min())
-        # courseAngles_border = [courseAngles.max(), courseAngles.min()]
         aux_features = torch.stack([norm_speeds,norm_accs,norm_courseAngles],axis=-1)
         
         return aux_features

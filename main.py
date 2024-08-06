@@ -5,7 +5,6 @@ from argparse import ArgumentParser
 import numpy as np
 import pandas as pd
 
-# torch 2.1中要求对os.environ的设置要在import torch前，遂更改顺序
 parser = ArgumentParser()
 parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, default="local_test_search") # required=True
 parser.add_argument('--cuda', help='index of the cuda device to use', type=int, default='7')

@@ -30,18 +30,18 @@ from .ssd_combined import mamba_chunk_scan_combined
 from .ssd_combined import mamba_split_conv1d_scan_combined
 
 
-class Mamba2(nn.Module):
+class TrajMamba2(nn.Module):
     def __init__(
         self,
         d_model, # 模型输入输出维度 D
-        d_inner=0, # 模型内部维度
+        d_inner=0, # 指定模型内部维度
         d_state=128, # 状态空间的维度 N [从Mamba-1的16扩大到128]
         d_conv=4, # 1D卷积的卷积核大小
         conv_init=None,
         expand=2, # 扩展因子 E (the controllable expansion factor)
         headdim=64, # head 的维度 P, 即一个单头有P个通道 [Mamba-1的P=1(SISO)]
         d_ssm=None,  # If not None, we only apply SSM on this many dimensions, the rest uses gated MLP
-        ngroups=1, # 固定值不可改！参数 𝐵 和 𝐶 投影在 𝑋 头部之间只存在 1 个单头进行共享，类似于多值注意力(Multi-value Attn. 论文式20)
+        ngroups=1,
         A_init_range=(1, 16),
         D_has_hdim=False,
         rmsnorm=True, # 是否在最后的输出投影层前添加一个额外的规范化层
@@ -73,16 +73,16 @@ class Mamba2(nn.Module):
         self.sequence_parallel = sequence_parallel
         self.world_size = 1 if process_group is None else process_group.size()
         self.local_rank = 0 if process_group is None else process_group.rank()
-        # self.d_inner: 内部维度，即扩展后的维度
+        # self.d_inner: 内部维度
         self.d_inner = d_inner // self.world_size if d_inner else (self.expand * self.d_model) // self.world_size
         assert self.d_inner * self.world_size == d_inner if d_inner else self.expand * self.d_model # 确保整除
         self.headdim = headdim
-        # self.d_ssm: ssm的（总）维度
+        # self.d_ssm: ssm的总维度
         self.d_ssm = self.d_inner if d_ssm is None else d_ssm // self.world_size
         assert ngroups % self.world_size == 0
         self.ngroups = ngroups // self.world_size
         assert self.d_ssm % self.headdim == 0
-        # self.nheads: 多头SSM的haed个数    Mamba2中使用的是多头SSM，由ssm的总维度self.d_ssm 和 单个head的维度self.headdim 计算得出
+        # self.nheads: 多头SSM的haed个数
         self.nheads = self.d_ssm // self.headdim
         self.D_has_hdim = D_has_hdim
         self.rmsnorm = rmsnorm
@@ -94,12 +94,7 @@ class Mamba2(nn.Module):
         self.layer_idx = layer_idx
         self.no_gen_bcdt = (aux_feature_size > 0)
 
-        # Order: [z, x, B, C, dt]   z,x: self.d_inner;  B,C: self.ngroups * self.d_state; dt: self.nheads
         d_in_proj = 2 * self.d_inner if self.no_gen_bcdt else 2 * self.d_inner + 2 * self.ngroups * self.d_state + self.nheads
-        # 输入线性变换层
-            # 把Mamba Block结构的两个分支中的输入线性层合并，用一个线性层实现！！
-        """ 改动1：输入线性变换层生成 x, z 的同时也生成了 SSM 参数 B,C,Δ
-                      此时，B,C,Δ 是层输入的函数（并行投影），而不是作为 SSM 输入 x 的函数 """
         if self.process_group is None:
             self.in_proj = nn.Linear(self.d_model, d_in_proj, bias=bias, **factory_kwargs)
         else:
@@ -107,25 +102,20 @@ class Mamba2(nn.Module):
                                                 process_group=self.process_group, sequence_parallel=self.sequence_parallel,
                                                 **factory_kwargs)
 
-        conv_dim = self.d_ssm if self.no_gen_bcdt else self.d_ssm + 2 * self.ngroups * self.d_state # Order: [x, B, C]
-        # 一维卷积层，执行深度卷积（Mamba模型的特色之一，用于处理序列数据）
-            # 沿着序列长度L的方向应用卷积核
-            # 每个输入通道被单独卷积到每个输出通道，意味着每个输出通道的结果是通过仅与一个输入通道卷积得到的
+        conv_dim = self.d_ssm if self.no_gen_bcdt else self.d_ssm + 2 * self.ngroups * self.d_state
         self.conv1d = nn.Conv1d(
             in_channels=conv_dim,
             out_channels=conv_dim,
             bias=conv_bias,
             kernel_size=d_conv,
-            groups=conv_dim, # groups=in_channels: 输入的通道分成in_channels组(每一组就一个通道)，此时每一个输出通道只需要在其中一个输入通道上做卷积。
+            groups=conv_dim,
             padding=d_conv - 1,
             **factory_kwargs,
-        ) # B*in_channels*L → B*out_channels*(L + d_conv-1)     in_channels=out_channels=conv_dim
+        ) # B*in_channels*L → B*out_channels*(L + d_conv-1)
         if self.conv_init is not None:
             nn.init.uniform_(self.conv1d.weight, -self.conv_init, self.conv_init)
 
         self.act = nn.SiLU() # 激活函数固定为SiLU
-
-        """ 改动1.5：删除了将输入映射为SSM参数(B,C,Δ)的两个线性变换层————B,C,Δ在块的开头由输入线性变换层self.in_proj生成 """
 
         # Initialize log dt bias    so that F.softplus(dt_bias) is between dt_min and dt_max
         dt = torch.exp(
@@ -142,25 +132,20 @@ class Mamba2(nn.Module):
 
         ## ssm参数 A、D 与输入无关
         assert A_init_range[0] > 0 and A_init_range[1] >= A_init_range[0]
-        # 初始化SSM的矩阵A
         A = torch.empty(self.nheads, dtype=torch.float32, device=device).uniform_(*A_init_range) # (nheads)
         A_log = torch.log(A).to(dtype=dtype) # also Keep A_log in fp32 in update version: delete ".to(dtype=dtype)"
-        # 矩阵A的对数值，作为一个可训练参数
         self.A_log = nn.Parameter(A_log)
         self.A_log._no_weight_decay = True
 
         # D "skip" parameter
-        # 矩阵D初始化为全1，也是一个可训练参数 shape:(self.d_ssm,) / (self.nheads,)  [self.d_ssm=self.nheads*self.headdim]
         self.D = nn.Parameter(torch.ones(self.d_ssm if self.D_has_hdim else self.nheads, device=device))
         self.D._no_weight_decay = True
 
-        """  改动2：在最后的输出投影层前添加了一个额外的norm层，就像在NormFormer中一样，以提高稳定性 """
         if self.rmsnorm:
             assert RMSNormGated is not None
             self.norm = RMSNormGated(self.d_ssm, eps=1e-5, norm_before_gate=self.norm_before_gate,
                                      group_size=self.d_ssm // ngroups, **factory_kwargs)
 
-        # 输出线性变换层，用于输出的投影
         if self.process_group is None:
             self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
         else:
@@ -180,11 +165,10 @@ class Mamba2(nn.Module):
         assert not self.no_gen_bcdt or B is not None
         # assert self.aux_feature_size==0 or (self.aux_feature_size and B is not None)
 
-        # 获取输入的维度：batch, seqlen, dim
         seqlen_og = seqlen
-        if seqlen is None: # 输入u是三维
+        if seqlen is None:
             batch, seqlen, dim = u.shape
-        else: # 输入u是二维
+        else:
             batch_seqlen, dim = u.shape
             batch = batch_seqlen // seqlen
 
@@ -196,16 +180,12 @@ class Mamba2(nn.Module):
                 out, _, _ = self.step(u, conv_state, ssm_state, (B, C, dt))
                 return out
 
-        # Order: [z, x, B, C, dt]
         zxbcdt = self.in_proj(u)  # (B, L, d_in_proj) or (B * L, d_in_proj)
-        if seqlen_og is not None: # 二维转三维
+        if seqlen_og is not None:
             zxbcdt = rearrange(zxbcdt, "(b l) d -> b l d", l=seqlen)
         
-        # 这里的负号-是因为在ssm中，矩阵A通常表示的是一个离散时间系统的转换矩阵，它描述了系统状态随时间的演变
-        # 在许多情况下，A矩阵的元素应该是负的，以确保系统的稳定性
-        # 这是因为在离散时间系统中，我们希望系统的状态随着时间的推移而衰减或稳定下来，而不是增长，从而避免系统变得不稳定或发散
-        A = -torch.exp(self.A_log)  # (nheads) or (d_inner, d_state) [Mamba-2:(nheads), Mamba-1:(d_inner, d_state)]
-        dt_limit_kwargs = {} if self.dt_limit == (0.0, float("inf")) else dict(dt_limit=self.dt_limit) # ？
+        A = -torch.exp(self.A_log)  # (nheads) or (d_inner, d_state)
+        dt_limit_kwargs = {} if self.dt_limit == (0.0, float("inf")) else dict(dt_limit=self.dt_limit)
         
         if self.use_mem_eff_path and inference_params is None:
             out = mamba_split_conv1d_scan_combined(
@@ -230,17 +210,12 @@ class Mamba2(nn.Module):
                 norm_before_gate=self.norm_before_gate,
                 **dt_limit_kwargs,
             )
-            # 三维转二维——变回去
             if seqlen_og is not None:
                 out = rearrange(out, "b l d -> (b l) d")
-            # 使用某个并行策略对out进行处理：序列并行（reduce_scatter） or 张量并行（all_reduce）
             if self.process_group is not None:
                 reduce_fn = reduce_scatter if self.sequence_parallel else all_reduce
                 out = reduce_fn(out, self.process_group)
         else:
-            # zxbcdt.shape[-1] = d_in_proj = 2 * self.d_inner + 2 * self.ngroups * self.d_state + self.nheads
-            # self.d_ssm = self.d_inner if d_ssm is None else d_ssm // self.world_size
-            """ d_mlp = self.d_inner - self.d_ssm """
             if self.no_gen_bcdt:
                 d_mlp = (zxbcdt.shape[-1] - 2 * self.d_ssm) // 2
                 z0, x0, z, xBC = torch.split(
@@ -250,27 +225,20 @@ class Mamba2(nn.Module):
                 )
             else:
                 d_mlp = (zxbcdt.shape[-1] - 2 * self.d_ssm - 2 * self.ngroups * self.d_state - self.nheads) // 2
-                """ 将输入线性层self.in_proj的输出zxbcdt分成几部分：(z0, x0,) z, xBC, dt
-                        注：当d_mlp > 0时，才可能split出 z0, x0 """
                 z0, x0, z, xBC, dt = torch.split(
                     zxbcdt,
                     [d_mlp, d_mlp, self.d_ssm, self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads],
                     dim=-1
                 )
-                """
-                xBC还要输入到Conv+激活函数，然后再进行分割生成x, B, C
-                dt，即SSM参数Δ，在此已生成完毕，无需再进行任何操作！
-                """
 
             # Compute short convolution
             if conv_state is not None:
                 # If we just take xBC[:, :, -self.d_conv :], it will error if seqlen < self.d_conv
                 # Instead F.pad will pad with zeros if seqlen < self.d_conv, and truncate otherwise.
-                xBC_t = rearrange(xBC, "b l d -> b d l") # transpose xBC
+                xBC_t = rearrange(xBC, "b l d -> b d l")
                 conv_state.copy_(F.pad(xBC_t, (self.d_conv - xBC_t.shape[-1], 0)))  # Update state (B D W)
             assert self.activation in ["silu", "swish"]
             if causal_conv1d_fn is None or self.activation not in ["silu", "swish"]:
-                # self.conv1d输出的序列长度L不变，无需切片？不应该是L + d_conv-1嘛……
                 xBC = self.act(
                     self.conv1d(xBC.transpose(1, 2)).transpose(1, 2) # b l d -> b d l -> b l d
                 )  # (B, L, self.d_ssm + 2 * ngroups * d_state)
@@ -285,10 +253,9 @@ class Mamba2(nn.Module):
             if self.no_gen_bcdt: # 变量xBC即为x，B,C 用传入参数
                 x = xBC
             else:
-                # 从Conv的输出直接分割出x, B, C   [删除了将SSM输入x映射为SSM参数(B,C,Δ)的线性投影层]
+                # 从Conv的输出直接分割出x, B, C   
                 x, B, C = torch.split(xBC, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
             
-            # 新加速算法
             y = mamba_chunk_scan_combined(
                 rearrange(x, "b l (h p) -> b l h p", p=self.headdim), # (B, L, self.nheads, self.headdim)
                 dt, # (B, L, self.nheads)
@@ -307,26 +274,26 @@ class Mamba2(nn.Module):
             if ssm_state is not None:
                 y, last_state = y
                 ssm_state.copy_(last_state)
-            y = rearrange(y, "b l h p -> b l (h p)") # 输出y形状要reshape回去
+            y = rearrange(y, "b l h p -> b l (h p)")
             
-            if self.rmsnorm: # 过新加的norm层：Mamba block的一二分支输出相乘+norm
+            if self.rmsnorm:
                 y = self.norm(y, z)
             
-            if d_mlp > 0: # （norm后的）SSM输出y需额外cat上F.silu(z0) * x0
+            if d_mlp > 0:
                 y = torch.cat([F.silu(z0) * x0, y], dim=-1) # (B, L, d_ssm) -> (B, L, d_inner)
-            if seqlen_og is not None: # 三维转二维
+            if seqlen_og is not None:
                 y = rearrange(y, "b l d -> (b l) d")
-            out = self.out_proj(y) # 输出线性变换: (B, L, d_inner) -> (B, L, D) 
+            out = self.out_proj(y) # (B, L, d_inner) -> (B, L, D) 
         
         return out
-    """ NO DEBUG """
+            
     def step(self, hidden_states, conv_state, ssm_state, bcdt=(None, None, None)): # hidden_states only have 1 token, seqlen=1
         dtype = hidden_states.dtype
         assert hidden_states.shape[1] == 1, "Only support decoding with 1 token at a time for now"
         if self.no_gen_bcdt:
             assert bcdt[0] is not None and bcdt[0].shape[1] == 1, "Only support decoding with 1 token at a time for now"
         
-        zxbcdt = self.in_proj(hidden_states.squeeze(1))  # (B 2D)   2D=d_in_proj
+        zxbcdt = self.in_proj(hidden_states.squeeze(1))
         
         # d_mlp = self.d_inner - self.d_ssm
         if self.no_gen_bcdt:
@@ -338,10 +305,6 @@ class Mamba2(nn.Module):
             )
         else:
             d_mlp = (zxbcdt.shape[-1] - 2 * self.d_ssm - 2 * self.ngroups * self.d_state - self.nheads) // 2
-            # 将zxbcdt分成几部分：(z0, x0,) z, xBC, dt
-                # 当d_mlp > 0时，才可能split出 z0, x0
-                # xBC还要输入到Conv+激活函数，然后再进行分割生成x, B, C
-                # dt，即SSM参数Δ，在此已生成完毕，无需再进行任何操作！
             z0, x0, z, xBC, dt = torch.split(
                 zxbcdt,
                 [d_mlp, d_mlp, self.d_ssm, self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads],
@@ -349,7 +312,6 @@ class Mamba2(nn.Module):
             )
 
         # Conv step
-        """ 相比于Mamba-1，仅将变量x替换为xBC，其他不变 """
         if causal_conv1d_update is None:
             conv_state.copy_(torch.roll(conv_state, shifts=-1, dims=-1))  # Update state (B D W)
             conv_state[:, :, -1] = xBC
@@ -370,7 +332,7 @@ class Mamba2(nn.Module):
             x = xBC
             B, C, dt = bcdt[0].squeeze(1), bcdt[1].squeeze(1), bcdt[2].squeeze(1)
         else:
-            # 从Conv的输出直接分割出x, B, C   [删除了将SSM输入x映射为SSM参数(B,C,Δ)的线性投影层]
+            # 从Conv的输出直接分割出x, B, C
                 # x: (B, self.d_ssm)  B,C: (B, self.ngroups*self.d_state)
             x, B, C = torch.split(xBC, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
         
@@ -390,9 +352,10 @@ class Mamba2(nn.Module):
             ssm_state.copy_(ssm_state * rearrange(dA, "b h -> b h 1 1") + dBx) # (B, self.nheads, self.headdim, self.d_state)
             # SSM式2: y_t = Ch_t
             y = torch.einsum("bhpn,bn->bhp", ssm_state.to(dtype), C)
-            y = y + rearrange(self.D.to(dtype), "h -> h 1") * x # +Dx, 残差
-            y = rearrange(y, "b h p -> b (h p)") # 输出y形状再reshape回去
-            if not self.rmsnorm: # Mamba block的一二分支输出相乘
+            # +Dx, 残差
+            y = y + rearrange(self.D.to(dtype), "h -> h 1") * x
+            y = rearrange(y, "b h p -> b (h p)")
+            if not self.rmsnorm:
                 y = y * self.act(z)  # (B D)
         else:
             # 对存储的原始参数 A,dt,dt_bias,D 沿单个head的内部维度P（以及状态空间的维度N——参数A）创建重复的序列
@@ -400,23 +363,22 @@ class Mamba2(nn.Module):
             dt = repeat(dt, "b h -> b h p", p=self.headdim)
             dt_bias = repeat(self.dt_bias, "h -> h p", p=self.headdim)
             D = repeat(self.D, "h -> h p", p=self.headdim)
-            # 调整B, C的形状
             B = rearrange(B, "b (g n) -> b g n", g=self.ngroups)
             C = rearrange(C, "b (g n) -> b g n", g=self.ngroups)
             
-            x_reshaped = rearrange(x, "b (h p) -> b h p", p=self.headdim) # reshape输入x
-            if not self.rmsnorm: # 没有额外加norm层，计算SSM输出y要用到z，则要和x一样对z做reshape
+            x_reshaped = rearrange(x, "b (h p) -> b h p", p=self.headdim)
+            if not self.rmsnorm:
                 z = rearrange(z, "b (h p) -> b h p", p=self.headdim)
             y = selective_state_update(
                 ssm_state, x_reshaped, dt, A, B, C, D, z=z if not self.rmsnorm else None,
                 dt_bias=dt_bias, dt_softplus=True
             )
-            y = rearrange(y, "b h p -> b (h p)") # 输出y形状再reshape回去
+            y = rearrange(y, "b h p -> b (h p)")
         
-        if self.rmsnorm: # 过新加的norm层：Mamba block的一二分支输出相乘+norm
+        if self.rmsnorm:
             y = self.norm(y, z)
         
-        if d_mlp > 0: # （norm后的）SSM输出y需额外cat上F.silu(z0) * x0
+        if d_mlp > 0:
             y = torch.cat([F.silu(z0) * x0, y], dim=-1) # (B, d_ssm) -> (B, d_inner)
         out = self.out_proj(y) # (B d_model)
         return out.unsqueeze(1), conv_state, ssm_state
@@ -462,7 +424,6 @@ class Mamba2(nn.Module):
         return conv_state, ssm_state
 
 
-""" mixer（即Mamba block/MHA）后可以再加 norm+MLP（新增），其他不变 """
 class Block(nn.Module):
     def __init__(
         self, dim, mixer_cls, mlp_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False

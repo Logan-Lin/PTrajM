@@ -1,6 +1,6 @@
 [
     {
-        "save_name": "0405",
+        "save_name": "0405_mamba2",
         "dataset": {
             "train_traj_df": "./samples/small_chengdu.h5",
             "test_traj_df": "./samples/small_chengdu.h5",

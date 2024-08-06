@@ -25,14 +25,6 @@ def create_if_noexists(path):
         os.makedirs(path)
 
 
-# def cal_courseAngle(lng1, lat1, lng2, lat2):
-#     y = math.sin(lng2-lng1) * math.cos(lat2)
-#     x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(lng2-lng1)
-#     bearing = math.atan2(y, x)
-#     bearing = 180 * bearing / math.pi
-#     if bearing < 0:
-#         bearing = bearing + 360
-#     return bearing
 def cal_courseAngle(lng1, lat1, lng2, lat2):
     lng1, lat1, lng2, lat2 = map(np.radians, [lng1, lat1, lng2, lat2])
     y = np.sin(lng2-lng1) * np.cos(lat2)
@@ -99,34 +91,10 @@ def cal_regression_metric(label, pres):
 def distance_mae(distance, null_val=np.nan):
     distance_mae = np.mean(np.abs(distance))
     return distance_mae
-    # if np.isnan(null_val):
-    #     mask = ~torch.isnan(distance)
-    # else:
-    #     mask = (distance!=null_val)
-    # mask = mask.float()
-    # mask /=  np.mean((mask))
-    # mask = np.where(np.isnan(mask), np.zeros_like(mask), mask)
-    # # loss = torch.abs(preds-labels)
-    # loss = np.abs(distance)
-    # loss = loss * mask
-    # loss = np.where(np.isnan(loss), np.zeros_like(loss), loss)
-    # return np.mean(loss)
 
 def distance_mse(distance, null_val=np.nan):
     distance_mse = np.mean(distance**2)
     return distance_mse
-    # if np.isnan(null_val):
-    #     mask = ~torch.isnan(distance)
-    # else:
-    #     mask = (distance!=null_val)
-    # mask = mask.float()
-    # mask /= np.mean((mask))
-    # mask = np.where(np.isnan(mask), np.zeros_like(mask), mask)
-    # # loss = (preds-labels)**2
-    # loss = distance**2
-    # loss = loss * mask
-    # loss = np.where(np.isnan(loss), np.zeros_like(loss), loss)
-    # return np.mean(loss)
 
 def distance_rmse(distance, null_val=np.nan):
     return np.sqrt(distance_mse(distance=distance, null_val=null_val))

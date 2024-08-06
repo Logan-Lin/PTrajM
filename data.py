@@ -225,7 +225,7 @@ class TrajectorySearchTestdata:
         all_hoptgts = [t[1::2] for t in self.trajs]
         self.all_hoptgts = np.array(all_hoptgts, dtype=object)
         
-        num_negative = min(len(self.trajs) - num_target, num_negative) # 但这里表明：negative只能从没被选为tgt的剩余轨迹中选。。。
+        num_negative = min(len(self.trajs) - num_target, num_negative)
         if neg_random_choice:
             neg_indices = []
             # neg_trip_ids = [i for i in range(len(self.trajs)) if i not in sampled_trip_ids]
@@ -233,7 +233,6 @@ class TrajectorySearchTestdata:
                 # 除自身对应的原始轨迹，其他轨迹都可看作negative trajectory
                 neg_trip_ids = np.delete(np.arange(len(self.trajs)), sampled_trip_ids[i])
                 neg_indice = np.random.choice(neg_trip_ids, num_negative, replace=False)
-                # C = neg_indice[np.in1d(neg_indice, sampled_trip_ids_array)]
                 neg_indices.append(neg_indice)
         else:
             select_index = COL_I['spatial']
@@ -261,7 +260,6 @@ class TrajectorySearchTestdata:
                 # choose num_negtive neighbors randomly
                 # print(farthest_idx[0])
                 farthest_idx = np.random.choice(farthest_idx[0], num_negative, replace=False)
-                # D = farthest_idx[np.in1d(farthest_idx, sampled_trip_ids_array)]
                 neg_indices.append(farthest_idx)
         self.neg_indices = np.array(neg_indices)
         print("neg_indices shape: ", self.neg_indices.shape)

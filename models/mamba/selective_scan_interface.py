@@ -83,13 +83,12 @@ def selective_scan_fn(u, delta, A, B, C, D=None, z=None, delta_bias=None, delta_
     return SelectiveScanFn.apply(u, delta, A, B, C, D, z, delta_bias, delta_softplus, return_last_state)
 
 
-# 选择性扫描算法    对应论文Algorithm2中的第5，6步：A,B离散化、SSM计算
 def selective_scan_ref(u, delta, A, B, C, D=None, z=None, delta_bias=None, delta_softplus=False,
                       return_last_state=False):
     """
     选择性扫描算法
     
-    对应论文Algorithm2中的第5，6步：A,B离散化、SSM计算
+    对应Mamba论文Algorithm2中的第5，6步：A,B离散化、SSM计算
     代码实现的很灵活，参数A,B,C可具有多种形式
     In Mamba block, A:r(D N), B: r(B N L), C: r(B N L)
 
@@ -104,8 +103,6 @@ def selective_scan_ref(u, delta, A, B, C, D=None, z=None, delta_bias=None, delta
 
     out: r(B D L)
     last_state (optional): r(B D dstate) or c(B D dstate)
-
-    可参考run_SSM(A, B, C, u) in The Annotated S4，深入理解运行流程
     """
     dtype_in = u.dtype
     u = u.float()
@@ -114,7 +111,7 @@ def selective_scan_ref(u, delta, A, B, C, D=None, z=None, delta_bias=None, delta
     if delta_bias is not None:
         delta = delta + delta_bias[..., None].float()
     if delta_softplus:
-        delta = F.softplus(delta) # 给参数Δ加softplus激活函数————论文Algorithm 2中的设定
+        delta = F.softplus(delta)
     
     batch, dim, dstate = u.shape[0], A.shape[0], A.shape[1] # B, D(d_inner), N(d_state)
     is_variable_B = B.dim() >= 3 # True with params B of Mamba block
@@ -132,7 +129,7 @@ def selective_scan_ref(u, delta, A, B, C, D=None, z=None, delta_bias=None, delta
         C = C.float()
     
     # 初始化ssm状态x为零
-    x = A.new_zeros((batch, dim, dstate)) # new_zeros(): 生成copy参数A所有类型（如数据类型和数据所在设备等）的全零tensor，且可指定形状
+    x = A.new_zeros((batch, dim, dstate))
     # 初始化输出列表ys
     ys = []
     
@@ -149,8 +146,7 @@ def selective_scan_ref(u, delta, A, B, C, D=None, z=None, delta_bias=None, delta
     else:
         if B.dim() == 3:
             '''
-            计算离散化的B：使用一个简化的Euler discretization，而不是论文中指定的ZOH方法！
-                对B不使用ZOH的原因，作者解释如下:"A is the more important term and the performance doesn't change much with the simplification on B"
+            计算离散化的B：使用一个简化的Euler discretization
             Δ,u:(B, L, d_inner) B:(B, d_state, L) -> deltaB_u(B, d_inner, L, d_state): 代表了输入u对状态的直接影响
             '''
             deltaB_u = torch.einsum('bdl,bnl,bdl->bdln', delta, B, u)
@@ -161,7 +157,7 @@ def selective_scan_ref(u, delta, A, B, C, D=None, z=None, delta_bias=None, delta
     if is_variable_C and C.dim() == 4:
         C = repeat(C, "B G N L -> B (G H) N L", H=dim // C.shape[1])
     
-    # Perform selective scan (see scan_SSM() in The Annotated S4 [2])
+    # Perform selective scan
     # Note that the below is sequential, while the official implementation does a much faster parallel scan that
     # is additionally hardware-aware (like FlashAttention).
     last_state = None
@@ -383,7 +379,6 @@ def mamba_inner_fn(
                               A, B, C, D, src_params, delta_bias, B_proj_bias, C_proj_bias, delta_softplus)
 
 
-# 详细注释略，流程同其他部分的代码，此处仅简单给代码行分块
 def mamba_inner_ref(
     xz, conv1d_weight, conv1d_bias, x_proj_weight, delta_proj_weight,
     out_proj_weight, out_proj_bias,
