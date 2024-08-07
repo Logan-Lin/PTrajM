@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 parser = ArgumentParser()
-parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, default="local_test_search") # required=True
+parser.add_argument('-s', '--settings', help='name of the settings file to use', type=str, default="local_test") # required=True
 parser.add_argument('--cuda', help='index of the cuda device to use', type=int, default='7')
 args = parser.parse_args()
 
@@ -97,7 +97,7 @@ def main():
                                                  **setting['finetune']['dataloader'])
                 if_denormalize = False
                 if isinstance(finetune_padder, DpPadder):
-                    if sorted(finetune_padder.pred_cols) == sorted([Y_COL, X_COL]): # 预测'lng''lat'
+                    if sorted(finetune_padder.pred_cols) == sorted([Y_COL, X_COL]): # need to denormalize predictor optput
                         if_denormalize = True
                 finetune_model(model=traj_clip, pred_head=pred_head, dataloader=finetune_dataloader, denormalize=if_denormalize,
                                **setting['finetune']['config'])
@@ -117,7 +117,7 @@ def main():
                                                 **setting['test']['dataloader'])
                 if_denormalize = False
                 if isinstance(test_padder, DpPadder):
-                    if sorted(test_padder.pred_cols) == sorted([Y_COL, X_COL]): # 预测'lng''lat'
+                    if sorted(test_padder.pred_cols) == sorted([Y_COL, X_COL]):
                         if_denormalize = True
                 predictions, targets = test_model(model=traj_clip, pred_head=pred_head, dataloader=test_dataloader, denormalize=if_denormalize)
             elif down_task == "search":

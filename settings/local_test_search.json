@@ -20,6 +20,7 @@
         },
         "pretrain": {
             "load": true,
+            "pretrain_save_name": "local_test",
             "save": true,
             "dataloader": {
                 "batch_size": 16,

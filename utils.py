@@ -49,7 +49,7 @@ def cal_tensor_geo_distance(lng1:torch.tensor, lat1:torch.tensor, lng2:torch.ten
     dlon = lng2 - lng1
     dlat = lat2 - lat1
     a = torch.sin(dlat / 2) ** 2 + torch.cos(lat1) * torch.cos(lat2) * torch.sin(dlon / 2) ** 2
-    distance = 2 * torch.arcsin(torch.sqrt(a)) * 6371 * 1000 # + 1e-8——不能在a后加，出大问题坏！
+    distance = 2 * torch.arcsin(torch.sqrt(a)) * 6371 * 1000
     return distance
 
 def cal_tensor_courseAngle(lng1:torch.tensor, lat1:torch.tensor, lng2:torch.tensor, lat2:torch.tensor):

@@ -10,6 +10,7 @@ Set OS env parameters:
 export SETTINGS_CACHE_DIR=/dir/to/cache/setting/files;
 export MODEL_CACHE_DIR=/dir/to/cache/model/parameters;
 export PRED_SAVE_DIR=/dir/to/save/predictions;
+export SEARCH_META_DIR=/dir/to/cache/processed_data/search_meta;
 ```
 
 Run the main script:
