@@ -2,14 +2,18 @@ import numpy as np
 import torch
 from torch import nn
 from einops import repeat
+import time
 
 from .encode import PositionalEmbedding, FourierEncode
 from data import COL_I
+from utils import cal_tensor_geo_distance, cal_tensor_courseAngle
+from .mamba.mamba import TrajMixerModel
+from .mamba2.mamba2 import TrajMixerModel2
 
 
 class TrajClip(nn.Module):
     def __init__(self, embed_size, d_model, road_embed, poi_embed, poi_coors, spatial_border,
-                 road_weight=1, poi_weight=1):
+                 device, road_weight=1, poi_weight=1, use_higher_features=True, use_mamba2=True, n_layer=4, d_state=128, headdim=64, d_inner=0):
         """The core model of Trajectory CLIP.
 
         Args:
@@ -21,14 +25,21 @@ class TrajClip(nn.Module):
             spatial_border (list): coordinates indicating the spatial border: [[x_min, y_min], [x_max, y_max]].
             road_weight (int, optional): loss weight of road view. Defaults to 1.
             poi_weight (int, optional): loss weight of poi view. Defaults to 1.
+            use_higher_features (bool, optional): whether to use trajectory's higher-order features. Defaults to True.
+            use_mamba2 (bool, optional): whether to use Mamba2 architecture. Defaults to True.
+            n_layer (int, optional): number of stacked Traj-Mamba Blocks. Defaults to 4.
+            d_state (int, optional): state size of Traj-SSM in Traj-Mamba Block. Defaults to 128.
+            headdim (int, optional): head dimension of Traj-SSM in Traj-Mamba Block. Defaults to 64.
+            d_inner (int, optional): inner model dimension of Traj-Mamba Blocks. If setting to 0 means d_inner=2*d_model.
         """
 
         super().__init__()
 
-        self.poi_coors = nn.Parameter(torch.from_numpy(poi_coors).float(), requires_grad=False)
+        self.poi_coors = nn.Parameter(torch.from_numpy(poi_coors).float(), requires_grad=False) # n_pois：12439[chengdu]
         self.spatial_border = nn.Parameter(torch.tensor(spatial_border), requires_grad=False)
         self.road_weight = road_weight
         self.poi_weight = poi_weight
+        self.use_higher_features = use_higher_features
 
         self.pos_encode_layer = PositionalEmbedding(d_model)
 
@@ -36,9 +47,15 @@ class TrajClip(nn.Module):
             'spatial_embed_layer': nn.Sequential(nn.Linear(2, embed_size), nn.LeakyReLU(), nn.Linear(embed_size, d_model)),
             'temporal_embed_modules': nn.ModuleList([FourierEncode(embed_size) for _ in range(4)]),
             'temporal_embed_layer': nn.Sequential(nn.LeakyReLU(), nn.Linear(embed_size * 4, d_model)),
-            'seq_encoder': nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=d_model, nhead=8, dim_feedforward=256, batch_first=True),
-                                                 num_layers=2)
+            'seq_encoder': 
+            TrajMixerModel2(d_model=d_model, n_layer=n_layer, d_intermediate=0, aux_feature_size=3 if self.use_higher_features else 0,
+                            d_state=d_state, headdim=headdim, d_inner=d_inner, device=device, dtype=torch.float32) if use_mamba2 else \
+            TrajMixerModel(d_model=d_model, n_layer=n_layer, aux_feature_size=3 if self.use_higher_features else 0,
+                                          device=device, dtype=torch.float32)
+            # nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=d_model, nhead=8, dim_feedforward=256, batch_first=True),
+            #                                      num_layers=2)
         })
+        print("model use Mamba2 block?",isinstance(self.traj_view['seq_encoder'], TrajMixerModel2))
 
         road_embed_mat = nn.Embedding(*road_embed.shape)
         road_embed_mat.weight = nn.Parameter(torch.from_numpy(road_embed).float(), requires_grad=False)
@@ -69,23 +86,23 @@ class TrajClip(nn.Module):
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.cross_entropy = nn.CrossEntropyLoss()
 
-    def cal_traj_h(self, spatial, temporal, valid_lens):
+    def cal_traj_h(self, norm_spatial, temporal, aux_features, valid_lens):
         """Calculate trajectories' embedding vectors given their spatio-temporal features.
         The detailed definition of trajectories' spatial and temporal features can be refered to `data.py`.
 
         Args:
-            spatial (FloatTensor): trajectories' spatial features, with shape (B, L, F_s).
+            norm_patial (FloatTensor): trajectories' spatial features, with shape (B, L, F_s).
             temporal (FloatTensor): trajectories' temporal features, with shape (B, L, F_t).
             valid_lens (LongTensor): valid lengths of trajectories in this batch.
+            aux_features (FloatTensor): trajectories' high-order features, with shape (B, L, F_h=3) or None.
 
         Returns:
             FloatTensor: the embedding vectors of this batch of trajectories, with shape (B, E).
         """
-        B, L = spatial.size(0), spatial.size(1)
-        positions = repeat(torch.arange(L), 'L -> B L', B=B)
+        B, L = norm_spatial.size(0), norm_spatial.size(1)
+        positions = repeat(torch.arange(L), 'L -> B L', B=B).to(valid_lens.device)
+        batch_mask = get_batch_mask(B, L, valid_lens)
 
-        norm_spatial = (spatial - self.spatial_border[0].unsqueeze(0).unsqueeze(0)) / \
-            (self.spatial_border[1] - self.spatial_border[0]).unsqueeze(0).unsqueeze(0)
         spatial_e = self.traj_view['spatial_embed_layer'](norm_spatial)  # (B, L, E)
 
         temporal_e = self.traj_view['temporal_embed_layer'](
@@ -97,8 +114,8 @@ class TrajClip(nn.Module):
 
         pos_encoding = self.pos_encode_layer(positions)
         traj_h = spatial_e + temporal_e + pos_encoding
-        batch_mask = get_batch_mask(B, L, valid_lens)
-        traj_h = self.traj_view['seq_encoder'](traj_h, src_key_padding_mask=batch_mask)
+        # traj_h = self.traj_view['seq_encoder'](traj_h, src_key_padding_mask=batch_mask)
+        traj_h = self.traj_view['seq_encoder'](traj_h, aux_features)
         traj_h = traj_h.masked_fill(batch_mask.unsqueeze(-1), 0).sum(1) / repeat(valid_lens, 'B -> B 1')
 
         return traj_h
@@ -114,7 +131,10 @@ class TrajClip(nn.Module):
         """
         spatial = input_seq[:, :, COL_I['spatial']]  # (B, L, 2)
         temporal = input_seq[:, :, COL_I['temporal']]  # (B, L, 2)
-        traj_h = self.cal_traj_h(spatial, temporal, valid_lens)
+        aux_features = self.cal_high_order_features(spatial, temporal, valid_lens)
+        norm_spatial = (spatial - self.spatial_border[0].unsqueeze(0).unsqueeze(0)) / \
+            (self.spatial_border[1] - self.spatial_border[0]).unsqueeze(0).unsqueeze(0)
+        traj_h = self.cal_traj_h(norm_spatial, temporal, aux_features, valid_lens)
 
         return traj_h
 
@@ -128,26 +148,29 @@ class TrajClip(nn.Module):
             FloatTensor: the pre-training loss value of this batch.
         """
         B, L, _ = input_seq.shape
-        positions = repeat(torch.arange(L), 'L -> B L', B=B)
+        positions = repeat(torch.arange(L), 'L -> B L', B=B).to(input_seq.device)
         batch_mask = get_batch_mask(B, L, valid_lens)
-        pos_encoding = self.pos_encode_layer(positions)
+        pos_encoding = self.pos_encode_layer(positions) # (B,L,D)
 
         # Trajectory (spatio-temporal) view.
         spatial = input_seq[:, :, COL_I['spatial']]  # (B, L, 2)
         temporal = input_seq[:, :, COL_I['temporal']]  # (B, L, 2)
-        traj_h = self.cal_traj_h(spatial, temporal, valid_lens)
+        aux_features = self.cal_high_order_features(spatial, temporal, valid_lens)
+        norm_spatial = (spatial - self.spatial_border[0].unsqueeze(0).unsqueeze(0)) / \
+            (self.spatial_border[1] - self.spatial_border[0]).unsqueeze(0).unsqueeze(0)
+        traj_h = self.cal_traj_h(norm_spatial, temporal, aux_features, valid_lens)
 
         # Road view.
-        road = input_seq[:, :, COL_I['road']].long()
-        road_index_e = self.road_view['index_embed_layer'](road)
-        road_text_e = self.road_view['text_embed_layer'](self.road_view['text_embed_mat'](road))
+        road = input_seq[:, :, COL_I['road']].long() # (B,L)
+        road_index_e = self.road_view['index_embed_layer'](road) # (B,L,D)
+        road_text_e = self.road_view['text_embed_layer'](self.road_view['text_embed_mat'](road)) # (B,L,D)
         road_h = road_index_e + road_text_e + pos_encoding
-        road_h = self.poi_view['seq_encoder'](road_h, src_key_padding_mask=batch_mask)
+        road_h = self.road_view['seq_encoder'](road_h, src_key_padding_mask=batch_mask)
         road_h = road_h.masked_fill(batch_mask.unsqueeze(-1), 0).sum(1) / valid_lens.unsqueeze(-1)
 
         # POI view.
         poi = ((self.poi_coors.unsqueeze(0).unsqueeze(0) -
-                spatial.unsqueeze(2)) ** 2).sum(-1).argmin(dim=-1)
+                spatial.unsqueeze(2)) ** 2).sum(-1).argmin(dim=-1) # (B,L)
         poi_index_e = self.poi_view['index_embed_layer'](poi)
         poi_text_e = self.poi_view['text_embed_layer'](self.poi_view['text_embed_mat'](poi))
         poi_h = poi_index_e + poi_text_e + pos_encoding
@@ -167,6 +190,60 @@ class TrajClip(nn.Module):
         loss_poi = (self.cross_entropy(logit_poi, label) + self.cross_entropy(logit_poi.t(), label)) / 2
         loss = self.road_weight * loss_road + self.poi_weight * loss_poi
         return loss
+    
+    def cal_high_order_features(self, spatial, temporal, valid_lens):
+        '''Calculate trajectories' high-order features, including speed, acceleration, and movement angle.
+
+        Args:
+            spatial (FloatTensor): trajectories' spatial features, with shape (B, L, F_s).
+            temporal (FloatTensor): trajectories' temporal features, with shape (B, L, F_t).
+            valid_lens (LongTensor): valid lengths of trajectories in this batch.
+        
+        Returns:
+            FloatTensor: the three high-order features of this batch of trajectories, with shape (B, L, 3).
+        '''
+        
+        B, L = spatial.size(0), spatial.size(1)
+        batch_mask = get_batch_mask(B, L, valid_lens)
+
+        dists = cal_tensor_geo_distance(spatial[:, :-1, 0], spatial[:, :-1, 1], spatial[:, 1:, 0], spatial[:, 1:, 1])
+        time_diff = temporal[:, 1:, 1] - temporal[:, :-1, 1]
+        time_diff = time_diff.masked_fill(time_diff == 0, 1)
+        speeds = torch.div(dists, time_diff) # (B,L-1)
+        speeds = torch.concatenate([speeds[:,:1], speeds],dim=-1) # 将轨迹起始速度v0置为求出的第一个速度
+        speeds = speeds.masked_fill(batch_mask, 0) # need to do masked_fill for padding trajectories!
+
+        speed_diff = speeds[:, 1:] - speeds[:, :-1]
+        accs = torch.div(speed_diff, time_diff) # (B,L-1)
+        accs = torch.concatenate([accs[:,:1], accs],dim=-1)
+
+        courseAngles = cal_tensor_courseAngle(spatial[:, :-1, 0], spatial[:, :-1, 1], spatial[:, 1:, 0], spatial[:, 1:, 1])
+        courseAngles = torch.concatenate([courseAngles[:,:1], courseAngles],dim=-1)
+        courseAngles = courseAngles.masked_fill(batch_mask, 0) # need to do masked_fill for padding trajectories!
+
+        norm_speeds = (speeds - speeds.min()) / (speeds.max() - speeds.min())
+        norm_accs = (accs - accs.min()) / (accs.max() - accs.min())
+        norm_courseAngles = (courseAngles - courseAngles.min()) / (courseAngles.max() - courseAngles.min())
+        aux_features = torch.stack([norm_speeds,norm_accs,norm_courseAngles],axis=-1)
+        
+        return aux_features
+    
+    def forward_on_search_mode(self, input_seq, valid_lens):
+        '''Calculate trajectories' embedding vectors given their spatio-temporal features and get embedding time of model.
+        '''
+        s_time = time.time()
+        spatial = input_seq[:, :, COL_I['spatial']]  # (B, L, 2)
+        temporal = input_seq[:, :, COL_I['temporal']]  # (B, L, 2)
+        aux_features = self.cal_high_order_features(spatial, temporal, valid_lens)
+        norm_spatial = (spatial - self.spatial_border[0].unsqueeze(0).unsqueeze(0)) / \
+            (self.spatial_border[1] - self.spatial_border[0]).unsqueeze(0).unsqueeze(0)
+        e_time = time.time()
+        
+        start_time = time.time()
+        traj_h = self.cal_traj_h(norm_spatial, temporal, aux_features, valid_lens)
+        end_time = time.time()
+
+        return traj_h, (end_time - start_time), (e_time-s_time)
 
 
 def gen_causal_mask(seq_len, include_self=True):

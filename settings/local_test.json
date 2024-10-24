@@ -1,6 +1,6 @@
 [
     {
-        "save_name": "0404",
+        "save_name": "local_test",
         "dataset": {
             "train_traj_df": "./samples/small_chengdu.h5",
             "test_traj_df": "./samples/small_chengdu.h5",
@@ -15,16 +15,16 @@
         "pred_head": {
             "input_size": 128,
             "hidden_size": 256,
-            "output_size": 5000,
-            "pred_type": "classification"
+            "output_size": 2,
+            "pred_type": "regression"
         },
         "pretrain": {
-            "load": true,
+            "load": false,
             "save": true,
             "dataloader": {
                 "batch_size": 16,
                 "shuffle": true,
-                "num_workers": 1
+                "num_workers": 0
             },
             "padder": {},
             "config": {
@@ -33,24 +33,25 @@
             }
         },
         "finetune": {
-            "load": true,
+            "load": false,
             "save": true,
             "dataloader": {
                 "batch_size": 16,
                 "shuffle": true,
-                "num_workers": 1
+                "num_workers": 0
             },
             "padder": {
                 "name": "dp",
                 "params": {
                     "pred_len": 5,
                     "pred_cols": [
-                        "road"
+                        "lng",
+                        "lat"
                     ]
                 }
             },
             "config": {
-                "num_epoch": 5,
+                "num_epoch": 30,
                 "lr": 1e-3,
                 "ft_encoder": true
             }
@@ -59,14 +60,15 @@
             "save": true,
             "dataloader": {
                 "batch_size": 16,
-                "num_workers": 1
+                "num_workers": 0
             },
             "padder": {
                 "name": "dp",
                 "params": {
                     "pred_len": 5,
                     "pred_cols": [
-                        "road"
+                        "lng",
+                        "lat"
                     ]
                 }
             }
